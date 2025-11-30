@@ -1,57 +1,41 @@
 import socket
 from messages import MessageProtocol
 
-class Peer:
+
+class SpectatorPeer:
     def __init__(self, host_ip: str, host_port: int = 5000):
         self.host_address = (host_ip, host_port)
         self.socket = None
-        self.seed = None
         self.connected = False
-        self.host_confirmed_address = None
+        self.seed = None
 
     def connect(self, timeout: float = 5.0) -> bool:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.settimeout(timeout)
 
         try:
-            request = MessageProtocol.create_handshake_request()
+            request = MessageProtocol.create_spectator_request()
             self.socket.sendto(request.encode('utf-8'), self.host_address)
-            print(f"[PEER] Sent HANDSHAKE_REQUEST → {self.host_address}")
+            print(f"[SPECTATOR] Sent SPECTATOR_REQUEST → {self.host_address}")
 
             data, address = self.socket.recvfrom(1024)
             parsed = MessageProtocol.parse_message(data.decode('utf-8'))
 
             if parsed.get("message_type") != "HANDSHAKE_RESPONSE":
-                print("Invalid")
+                print("[SPECTATOR] Unexpected message type")
                 return False
 
             self.seed = int(parsed["seed"])
             self.connected = True
-            self.host_confirmed_address = address
 
-            print(f"[PEER] Connected to host {address}")
-            print(f"[PEER] Seed synchronized: {self.seed}")
+            print(f"[SPECTATOR] Connected. Seed = {self.seed}")
             return True
 
         except socket.timeout:
-            print("[PEER] No response from host (timeout)")
+            print("[SPECTATOR] Timeout waiting for host")
             return False
 
     def close(self):
         if self.socket:
             self.socket.close()
-            print("[PEER] Socket closed")
-
-if __name__ == "__main__":
-    host_ip = input("Enter Request: ").strip()
-    joiner = Peer('localhost', 5000)
-
-    print("Attempting to connect to Host...")
-    success = joiner.connect()
-
-    if success:
-        print("Handshake successful!")
-    else:
-        print("Handshake failed.")
-
-    input("Press ENTER to exit")
+            print("[SPECTATOR] Socket closed")
