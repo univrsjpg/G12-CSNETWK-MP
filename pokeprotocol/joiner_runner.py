@@ -12,6 +12,8 @@ from typing import Optional, Tuple
 from base_protocol import PokeProtocolBase
 from pokemon_utils import normalize_pokemon_record
 from pokemon_data import pokemon_db
+import socket
+CHAT_PORT = 9999
 
 
 class PokeProtocolJoiner(PokeProtocolBase):
@@ -53,7 +55,7 @@ class PokeProtocolJoiner(PokeProtocolBase):
                 self.connect_as_spectator()
             elif choice == "3":
                 if self.connected:
-                    self.send_battle_setup()
+                    self.start_battle_setup()
                 else:
                     print("Not connected to host!")
             elif choice == "4":
@@ -134,6 +136,7 @@ class PokeProtocolJoiner(PokeProtocolBase):
             self.peer_address = address
             self.connected = True
             self.battle_state = "CONNECTED"
+            self.connect_chat(name="Player")
             
             print("\n" + "="*50)
             print("✅ CONNECTION SUCCESSFUL!")
@@ -168,6 +171,12 @@ class PokeProtocolJoiner(PokeProtocolBase):
         else:
             print("✗ Failed to send spectator request")
     
+    def connect_chat(self, name="Unknown"):
+        msg = f"message_type: CHAT_MESSAGE\nsender: {name}\ntext: joined the lobby"
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.sendto(msg.encode(), (self.host_address[0], CHAT_PORT))
+
+
     def start_battle_setup(self):
         """Start the battle setup phase"""
         print("\n" + "="*50)

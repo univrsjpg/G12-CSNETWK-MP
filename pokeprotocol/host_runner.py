@@ -12,6 +12,7 @@ from typing import Optional, Tuple
 from base_protocol import PokeProtocolBase
 from pokemon_utils import normalize_pokemon_record
 from pokemon_data import pokemon_db
+from chatManager import ChatManager
 
 
 class PokeProtocolHost(PokeProtocolBase):
@@ -25,12 +26,17 @@ class PokeProtocolHost(PokeProtocolBase):
         self.pokedex = pokemon_db
         
     def run(self):
-        """Main host runner"""
         self.print_banner()
-        
+
+        # --- START CHAT MANAGER ---
+        print("Starting Chat Server (port 9999)...")
+        self.chat = ChatManager()
+        self.chat.start()
+        print("Chat Server Online!")
+
         if not self.create_socket():
             return
-        
+            
         if self.bind_and_listen():
             self.main_loop()
     
@@ -142,14 +148,6 @@ class PokeProtocolHost(PokeProtocolBase):
                 except socket.timeout:
                     # Check for user cancellation (non-blocking input)
                     pass
-                
-                # Check if user pressed Enter to cancel
-                import select
-                if select.select([sys.stdin], [], [], 0)[0]:
-                    sys.stdin.readline()
-                    print("\nCancelled waiting for player")
-                    return
-                    
         except KeyboardInterrupt:
             print("\nCancelled waiting for player")
         finally:
@@ -192,14 +190,6 @@ class PokeProtocolHost(PokeProtocolBase):
                     
                 except socket.timeout:
                     pass
-                
-                # Check for user cancellation
-                import select
-                if select.select([sys.stdin], [], [], 0)[0]:
-                    sys.stdin.readline()
-                    print("\nCancelled waiting for spectator")
-                    return
-                    
         except KeyboardInterrupt:
             print("\nCancelled waiting for spectator")
         finally:
@@ -217,6 +207,14 @@ class PokeProtocolHost(PokeProtocolBase):
             print(f"✓ Spectator accepted")
         else:
             print("✗ Failed to send spectator response") 
+    
+    def broadcast_to_spectators(self, message):
+        for spec in self.spectators:
+            self.send_message(message, spec)
+
+            """
+                self.broadcast_to_spectators(message) This will be put every turn
+            """
     
     def start_battle_setup(self):
         """Start the battle setup phase"""
