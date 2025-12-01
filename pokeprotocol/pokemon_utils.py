@@ -1,9 +1,6 @@
 """
 pokemon_utils.py - Helper functions for loading and normalizing Pokémon data.
 """
-
-from __future__ import annotations
-
 import ast
 import math
 from typing import Any, Dict, Iterable, List, Optional
