@@ -230,14 +230,15 @@ class PokeProtocolHost(PokeProtocolBase):
         if not pokemon:
             print("✗ Pokémon not found in the Pokédex.")
             return
-
+        sp_attack_usage = input("Number of times to use special attacks: ")
+        sp_defense_usage = input("Number of times to use special defense: ")
         # Get stat boosts
         try:
-            sp_atk = int(pokemon.get("special_attack", 3))
-            sp_def = int(pokemon.get("special_defense", 2))
+            sp_atk = int(sp_attack_usage)
+            sp_def = int(sp_defense_usage)
         except (TypeError, ValueError):
-            sp_atk, sp_def = 3, 2
-            print("Using default values: 3 special attack, 2 special defense")
+            sp_atk, sp_def = 5, 5
+            print("Using default values: 5 special attack, 5 special defense")
         
         stat_boosts = {
             "special_attack_uses": sp_atk,
