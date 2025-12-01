@@ -10,8 +10,8 @@ import json
 import sys
 from typing import Optional, Tuple
 from base_protocol import PokeProtocolBase
-from load_pokemon import Pokedex
 from pokemon_utils import normalize_pokemon_record
+from pokemon_data import pokemon_db
 
 
 class PokeProtocolHost(PokeProtocolBase):
@@ -22,7 +22,7 @@ class PokeProtocolHost(PokeProtocolBase):
         self.seed: Optional[int] = None
         self.spectators = []
         self.battle_state = "WAITING_FOR_CONNECTION"
-        self.pokedex = Pokedex()
+        self.pokedex = pokemon_db
         
     def run(self):
         """Main host runner"""
@@ -224,7 +224,8 @@ class PokeProtocolHost(PokeProtocolBase):
         print("BATTLE SETUP PHASE")
         print("="*50)
         
-        pokemon_name = input("Enter the name of the pokemon: ").strip()
+        self.print_sample_pokemon()
+        pokemon_name = input("Enter the name or number of the Pokémon: ").strip()
         pokemon = self.fetch_pokemon(pokemon_name)
         if not pokemon:
             print("✗ Pokémon not found in the Pokédex.")
@@ -264,13 +265,21 @@ class PokeProtocolHost(PokeProtocolBase):
     
     def fetch_pokemon(self, pokemon_name: str):
         """Load and normalize Pokémon information from the Pokédex."""
-        try:
-            raw = self.pokedex.get_pokemon(pokemon_name)
-        except KeyError:
-            return None
+        raw = None
+        if pokemon_name.strip().isdigit():
+            raw = self.pokedex.get_pokemon_by_number(int(pokemon_name.strip()))
+        if not raw:
+            raw = self.pokedex.get_pokemon_by_name(pokemon_name)
         if not raw:
             return None
-        return normalize_pokemon_record(raw, pokemon_name)
+        return normalize_pokemon_record(raw, raw.get("name", pokemon_name))
+
+    def print_sample_pokemon(self, limit: int = 6):
+        """Display a quick list of Pokémon options."""
+        print("\nSample Pokémon choices:")
+        for entry in self.pokedex.get_pokemon_list(limit):
+            types = "/".join(filter(None, [entry.get("type1"), entry.get("type2")])) or "Unknown"
+            print(f"  [{entry['pokedex_number']:>3}] {entry['name']} ({types})")
     
     def wait_for_battle_setup(self):
         """Wait for BATTLE_SETUP from joiner"""
@@ -291,6 +300,7 @@ class PokeProtocolHost(PokeProtocolBase):
                 if pokemon:
                     print(f"Type(s): {', '.join(pokemon.get('type', ['Unknown']))}")
                     print(f"HP: {pokemon.get('hp', 'Unknown')}")
+                    print(f"Abilities: {', '.join(pokemon.get('abilities', ['Unknown']))}")
             except:
                 print(f"Pokémon data: {pokemon_json}")
             
