@@ -4,7 +4,10 @@ battle_system.py - Handles Pokémon battle mechanics
 
 import random
 from typing import Dict, List, Tuple
-from pokemon_data import pokemon_db
+# Assuming pokemon_db is imported or defined in pokemon_data.py
+# If pokemon_db is defined in pokemon_data.py, you need an import like:
+# from pokemon_data import pokemon_db
+from pokemon_data import pokemon_db # Assuming this import is correct
 
 
 class BattleSystem:
@@ -16,23 +19,26 @@ class BattleSystem:
         self.seed = seed or random.randint(1, 1000000)
         random.seed(self.seed)
         
-        # Move database (simplified - you should expand this)
+        # Move database (simplified - you should 
         self.moves = {
             'Tackle': {'type': 'normal', 'category': 'physical', 'power': 40, 'accuracy': 100},
             'Ember': {'type': 'fire', 'category': 'special', 'power': 40, 'accuracy': 100},
             'Water Gun': {'type': 'water', 'category': 'special', 'power': 40, 'accuracy': 100},
             'Vine Whip': {'type': 'grass', 'category': 'physical', 'power': 45, 'accuracy': 100},
+       
             'Thunderbolt': {'type': 'electric', 'category': 'special', 'power': 90, 'accuracy': 100},
             'Flamethrower': {'type': 'fire', 'category': 'special', 'power': 90, 'accuracy': 100},
             'Hydro Pump': {'type': 'water', 'category': 'special', 'power': 110, 'accuracy': 80},
             'Solar Beam': {'type': 'grass', 'category': 'special', 'power': 120, 'accuracy': 100},
             'Earthquake': {'type': 'ground', 'category': 'physical', 'power': 100, 'accuracy': 100},
+     
             'Ice Beam': {'type': 'ice', 'category': 'special', 'power': 90, 'accuracy': 100},
             'Psychic': {'type': 'psychic', 'category': 'special', 'power': 90, 'accuracy': 100},
             'Shadow Ball': {'type': 'ghost', 'category': 'special', 'power': 80, 'accuracy': 100},
         }
     
     def calculate_damage(self, attacker: Dict, defender: Dict, move_name: str, 
+                   
                         special_attack_boost: bool = False, 
                         special_defense_boost: bool = False) -> Dict:
         """
@@ -40,6 +46,7 @@ class BattleSystem:
         Damage = (BasePower × AttackerStat × TypeEffectiveness) / DefenderStat
         """
         if move_name not in self.moves:
+     
             # Default move if not found
             move = {'type': 'normal', 'category': 'physical', 'power': 40, 'accuracy': 100}
         else:
@@ -48,6 +55,7 @@ class BattleSystem:
         # Check accuracy
         if random.randint(1, 100) > move['accuracy']:
             return {
+  
                 'damage': 0,
                 'hit': False,
                 'message': f"{attacker['name']} used {move_name}... but it missed!"
@@ -59,6 +67,7 @@ class BattleSystem:
             defender_stat = defender['defense']
         else:  # special move
             attacker_stat = attacker['special_attack']
+          
             defender_stat = defender['special_defense']
             
             # Apply boosts if used
@@ -66,16 +75,27 @@ class BattleSystem:
                 attacker_stat = int(attacker_stat * 1.5)
             if special_defense_boost:
                 defender_stat = int(defender_stat * 1.5)
+  
+       
+        # Calculate type effectiveness (Type1Effectiveness * Type2Effectiveness)
         
-        # Calculate type effectiveness
-        defender_types = [defender['type1']]
-        if defender['type2']:
-            defender_types.append(defender['type2'])
-        
-        type_effectiveness = pokemon_db.get_type_effectiveness(
+        # 1. Get effectiveness against Type 1
+        type1_effectiveness = pokemon_db.get_type_effectiveness(
             move['type'], 
-            defender_types
+            [defender['type1']] # Pass only Type 1
         )
+        
+        type2_effectiveness = 1.0
+        if defender.get('type2'):
+            # 2. Get effectiveness against Type 2 (if it exists)
+            type2_effectiveness = pokemon_db.get_type_effectiveness(
+                move['type'], 
+                [defender['type2']] # Pass only Type 2
+            )
+        
+        # 3. Multiply them to get the final multiplier (as per RFC)
+        type_effectiveness = type1_effectiveness * type2_effectiveness
+ 
         
         # Apply STAB (Same Type Attack Bonus) - 1.5x if move type matches attacker's type
         stab = 1.0
@@ -90,7 +110,9 @@ class BattleSystem:
         if defender_stat == 0:
             defender_stat = 1  # Prevent division by zero
         
+        # Damage = (BasePower * AttackerStat * TypeEffectiveness * STAB) / DefenderStat * Random
         base_damage = (move['power'] * attacker_stat * type_effectiveness * stab) / defender_stat
+      
         damage = int(base_damage * random_factor)
         
         # Minimum damage is 1 if hit
@@ -104,7 +126,6 @@ class BattleSystem:
             effectiveness_text = " It was not very effective..."
         elif type_effectiveness == 0:
             effectiveness_text = " It had no effect!"
-        
         message = f"{attacker['name']} used {move_name}!{effectiveness_text}"
         
         return {
@@ -113,6 +134,7 @@ class BattleSystem:
             'message': message,
             'type_effectiveness': type_effectiveness,
             'stab_applied': stab > 1.0,
+            
             'move_type': move['type'],
             'move_category': move['category'],
             'attacker_stat_used': attacker_stat,
@@ -123,6 +145,7 @@ class BattleSystem:
         """Get moves that a Pokémon can learn (simplified)"""
         pokemon = pokemon_db.get_pokemon_by_name(pokemon_name)
         if not pokemon:
+    
             return list(self.moves.keys())[:4]  # Default moves
         
         # Simplified move assignment based on type
@@ -130,6 +153,7 @@ class BattleSystem:
             'grass': ['Vine Whip', 'Solar Beam', 'Tackle'],
             'fire': ['Ember', 'Flamethrower', 'Tackle'],
             'water': ['Water Gun', 'Hydro Pump', 'Tackle'],
+      
             'electric': ['Thunderbolt', 'Tackle'],
             'psychic': ['Psychic', 'Tackle'],
             'ghost': ['Shadow Ball', 'Tackle'],
@@ -138,14 +162,16 @@ class BattleSystem:
         }
         
         moves = []
+        
         # Add moves for type1
         if pokemon['type1'].lower() in type_moves:
             moves.extend(type_moves[pokemon['type1'].lower()])
         
         # Add moves for type2 if exists
-        if pokemon['type2'] and pokemon['type2'].lower() in type_moves:
+        if pokemon.get('type2') and pokemon['type2'].lower() in type_moves:
             for move in type_moves[pokemon['type2'].lower()]:
                 if move not in moves:
+   
                     moves.append(move)
         
         # Add some default moves if not enough
@@ -172,6 +198,7 @@ class BattleSystem:
     
     def get_battle_summary(self, attacker: Dict, defender: Dict, 
                           damage_result: Dict) -> Dict:
+ 
         """Create a battle summary for CALCULATION_REPORT"""
         return {
             'attacker': attacker['name'],

@@ -1,246 +1,250 @@
-"""
-pokemon_data.py - Handles loading and accessing Pokémon data from CSV.
-"""
-
-from __future__ import annotations
-
-import csv
+import pandas as pd
+import numpy as np
 import os
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional, Any, Tuple
+
+# --- Type Effectiveness Data (Expanded Type Chart) ---
+# This dictionary defines what the ATTACKING type is effective against (DEFENDING type).
+TYPE_MULTIPLIERS = {
+    "grass": {
+        "against_fire": 2.0, "against_flying": 2.0, "against_ice": 2.0,
+        "against_poison": 2.0, "against_bug": 2.0, "against_water": 0.5,
+        "against_electric": 0.5, "against_grass": 0.5, "against_ground": 0.5,
+    },
+    "poison": {
+        "against_ground": 2.0, "against_psychic": 2.0, "against_grass": 0.5,
+        "against_fighting": 0.5, "against_poison": 0.5, "against_bug": 0.5,
+        "against_fairy": 0.5,
+    },
+    "fire": {
+        "against_water": 2.0, "against_ground": 2.0, "against_rock": 2.0,
+        "against_bug": 0.5, "against_steel": 0.5, "against_fire": 0.5,
+        "against_grass": 0.5, "against_ice": 0.5, "against_fairy": 0.5,
+    },
+    "water": {
+        "against_electric": 2.0, "against_grass": 2.0, "against_steel": 0.5,
+        "against_fire": 0.5, "against_water": 0.5, "against_ice": 0.5,
+    },
+    "normal": {
+        "against_rock": 0.5, "against_steel": 0.5, "against_ghost": 0.0,
+    },
+    "fighting": {
+        "against_normal": 2.0, "against_rock": 2.0, "against_steel": 2.0,
+        "against_ice": 2.0, "against_dark": 2.0,
+        "against_flying": 0.5, "against_poison": 0.5, "against_bug": 0.5,
+        "against_psychic": 0.5, "against_fairy": 0.5, "against_ghost": 0.0,
+    },
+    "flying": {
+        "against_fighting": 2.0, "against_bug": 2.0, "against_grass": 2.0,
+        "against_rock": 0.5, "against_steel": 0.5, "against_electric": 0.5,
+    },
+    "ground": {
+        "against_poison": 2.0, "against_rock": 2.0, "against_steel": 2.0,
+        "against_fire": 2.0, "against_electric": 2.0,
+        "against_bug": 0.5, "against_grass": 0.5, "against_flying": 0.0,
+    },
+    "rock": {
+        "against_flying": 2.0, "against_bug": 2.0, "against_fire": 2.0,
+        "against_ice": 2.0,
+        "against_fighting": 0.5, "against_ground": 0.5, "against_steel": 0.5,
+    },
+    "bug": {
+        "against_grass": 2.0, "against_psychic": 2.0, "against_dark": 2.0,
+        "against_fighting": 0.5, "against_flying": 0.5, "against_poison": 0.5,
+        "against_ghost": 0.5, "against_steel": 0.5, "against_fire": 0.5,
+        "against_fairy": 0.5,
+    },
+    "ghost": {
+        "against_ghost": 2.0, "against_psychic": 2.0,
+        "against_dark": 0.5, "against_normal": 0.0, "against_fighting": 0.0,
+    },
+    "electric": {
+        "against_flying": 2.0, "against_water": 2.0,
+        "against_grass": 0.5, "against_electric": 0.5, "against_dragon": 0.5,
+        "against_ground": 0.0,
+    },
+    "psychic": {
+        "against_fighting": 2.0, "against_poison": 2.0,
+        "against_steel": 0.5, "against_psychic": 0.5, "against_dark": 0.0,
+    },
+    "ice": {
+        "against_flying": 2.0, "against_ground": 2.0, "against_grass": 2.0,
+        "against_dragon": 2.0,
+        "against_steel": 0.5, "against_fire": 0.5, "against_water": 0.5,
+        "against_ice": 0.5,
+    },
+    "dragon": {
+        "against_dragon": 2.0,
+        "against_steel": 0.5, "against_fairy": 0.0,
+    },
+    "steel": {
+        "against_rock": 2.0, "against_ice": 2.0, "against_fairy": 2.0,
+        "against_steel": 0.5, "against_fire": 0.5, "against_water": 0.5,
+        "against_electric": 0.5,
+    },
+    "dark": {
+        "against_ghost": 2.0, "against_psychic": 2.0,
+        "against_fighting": 0.5, "against_dark": 0.5, "against_fairy": 0.5,
+    },
+    "fairy": {
+        "against_fighting": 2.0, "against_dragon": 2.0, "against_dark": 2.0,
+        "against_poison": 0.5, "against_steel": 0.5, "against_fire": 0.5,
+    }
+}
 
 
-class PokemonDatabase:
-    """Database for Pokémon stats and information loaded from CSV."""
+class Pokedex:
+    """Manages loading and retrieval of Pokémon data using Pandas."""
+    
+    # Map CSV column names to the expected Python/Protocol names
+    COL_MAPPING = {
+        'type1': 'type1',
+        'type2': 'type2',
+        'hp': 'hp',
+        'attack': 'attack',
+        'defense': 'defense',
+        'sp_attack': 'special_attack',
+        'sp_defense': 'special_defense',
+        'speed': 'speed',
+        'abilities': 'abilities',
+        'pokedex_number': 'pokedex_number',
+        # Include all 'against_' columns for safety, even if unused directly by battle_system.py
+        'against_bug': 'against_bug', 'against_dark': 'against_dark',
+        'against_dragon': 'against_dragon', 'against_electric': 'against_electric',
+        'against_fairy': 'against_fairy', 'against_fight': 'against_fighting', # Fix mapping from fight to fighting
+        'against_fire': 'against_fire', 'against_flying': 'against_flying', 
+        'against_ghost': 'against_ghost', 'against_grass': 'against_grass', 
+        'against_ground': 'against_ground', 'against_ice': 'against_ice', 
+        'against_normal': 'against_normal', 'against_poison': 'against_poison', 
+        'against_psychic': 'against_psychic', 'against_rock': 'against_rock', 
+        'against_steel': 'against_steel', 'against_water': 'against_water'
+    }
 
-    def __init__(self, csv_path: str = "pokemon.csv"):
-        self.pokemon_data: Dict[int, Dict[str, Any]] = {}
-        self.csv_path = csv_path
-        self.load_data()
-
-    def load_data(self) -> None:
-        """Load Pokémon data from CSV file."""
-        csv_full_path = self.csv_path
-        if not os.path.isabs(csv_full_path):
-            csv_full_path = os.path.join(os.path.dirname(__file__), self.csv_path)
-
-        if not os.path.exists(csv_full_path):
-            print(f"Warning: Pokémon CSV file not found at {csv_full_path}")
-            print("Using default Pokémon data...")
-            self.create_default_data()
-            return
-
+    def __init__(self):
         try:
-            with open(csv_full_path, "r", encoding="utf-8") as file:
-                reader = csv.DictReader(file)
-                for row in reader:
-                    try:
-                        pokedex_num = int(row["pokedex_number"])
-                    except (KeyError, ValueError):
-                        continue
+            # Use 'Name' or 'name' as index based on the CSV structure
+            self.pokedex = pd.read_csv('pokemon.csv')
+            
+            # Standardize index for easy lookup (lowercase names)
+            self.pokedex['name_lower'] = self.pokedex['name'].str.lower()
+            self.pokedex = self.pokedex.set_index('name_lower', drop=False)
+            
+            # Map column names for internal use (e.g., 'sp_attack' -> 'special_attack')
+            self.pokedex = self.pokedex.rename(columns=self.COL_MAPPING)
 
-                    abilities = []
-                    abilities_str = row.get("abilities", "")
-                    if abilities_str and abilities_str != "nan":
-                        abilities = [
-                            ability.strip().strip("'\"")
-                            for ability in abilities_str.strip("[]").split(",")
-                            if ability.strip()
-                        ]
+        except FileNotFoundError:
+            print("Error: 'pokemon.csv' not found. Cannot load Pokedex.")
+            self.pokedex = pd.DataFrame()
+        except Exception as e:
+            print(f"Error loading Pokedex with Pandas: {e}")
+            self.pokedex = pd.DataFrame()
+            
+    def _extract_pokemon_data(self, row: pd.Series) -> Dict[str, Any]:
+        """Extracts and cleans essential data from a single Pandas Series (row)."""
+        if row.empty:
+            return {}
 
-                    against_stats: Dict[str, float] = {}
-                    for key, value in row.items():
-                        if key.startswith("against_"):
-                            try:
-                                against_stats[key] = float(value)
-                            except (TypeError, ValueError):
-                                against_stats[key] = 1.0
-
-                    def number_or_default(field: str, default: int = 0) -> int:
-                        try:
-                            return int(float(row.get(field, default)))
-                        except (TypeError, ValueError):
-                            return default
-
-                    def float_or_default(field: str, default: float = 0.0) -> float:
-                        try:
-                            return float(row.get(field, default))
-                        except (TypeError, ValueError):
-                            return default
-
-                    self.pokemon_data[pokedex_num] = {
-                        "name": row.get("name", "Unknown"),
-                        "pokedex_number": pokedex_num,
-                        "type1": (row.get("type1") or "").strip(),
-                        "type2": (row.get("type2") or "").strip() or None,
-                        "hp": number_or_default("hp", 50),
-                        "attack": number_or_default("attack", 50),
-                        "defense": number_or_default("defense", 50),
-                        "special_attack": number_or_default("sp_attack", 50),
-                        "special_defense": number_or_default("sp_defense", 50),
-                        "speed": number_or_default("speed", 50),
-                        "abilities": abilities,
-                        "height_m": float_or_default("height_m", 0.0),
-                        "weight_kg": float_or_default("weight_kg", 0.0),
-                        "base_total": number_or_default("base_total", 0),
-                        "capture_rate": number_or_default("capture_rate", 0),
-                        "classification": row.get("classfication", "Unknown"),
-                        "generation": number_or_default("generation", 1),
-                        "is_legendary": bool(int(row.get("is_legendary", 0))),
-                        "against_stats": against_stats,
-                    }
-
-            print(f"✓ Loaded {len(self.pokemon_data)} Pokémon from {csv_full_path}")
-
-        except Exception as exc:  # pragma: no cover - fallback path
-            print(f"Error loading Pokémon CSV: {exc}")
-            print("Using default Pokémon data...")
-            self.create_default_data()
-
-    def create_default_data(self) -> None:
-        """Create default Pokémon data if CSV is not available."""
-        self.pokemon_data = {
-            1: {
-                "name": "Bulbasaur",
-                "pokedex_number": 1,
-                "type1": "grass",
-                "type2": "poison",
-                "hp": 45,
-                "attack": 49,
-                "defense": 49,
-                "special_attack": 65,
-                "special_defense": 65,
-                "speed": 45,
-                "abilities": ["Overgrow", "Chlorophyll"],
-                "height_m": 0.7,
-                "weight_kg": 6.9,
-                "base_total": 318,
-                "capture_rate": 45,
-                "classification": "Seed Pokémon",
-                "generation": 1,
-                "is_legendary": False,
-                "against_stats": self.get_default_type_effectiveness(["grass", "poison"]),
-            },
-            4: {
-                "name": "Charmander",
-                "pokedex_number": 4,
-                "type1": "fire",
-                "type2": None,
-                "hp": 39,
-                "attack": 52,
-                "defense": 43,
-                "special_attack": 60,
-                "special_defense": 50,
-                "speed": 65,
-                "abilities": ["Blaze", "Solar Power"],
-                "height_m": 0.6,
-                "weight_kg": 8.5,
-                "base_total": 309,
-                "capture_rate": 45,
-                "classification": "Lizard Pokémon",
-                "generation": 1,
-                "is_legendary": False,
-                "against_stats": self.get_default_type_effectiveness(["fire"]),
-            },
-            7: {
-                "name": "Squirtle",
-                "pokedex_number": 7,
-                "type1": "water",
-                "type2": None,
-                "hp": 44,
-                "attack": 48,
-                "defense": 65,
-                "special_attack": 50,
-                "special_defense": 64,
-                "speed": 43,
-                "abilities": ["Torrent", "Rain Dish"],
-                "height_m": 0.5,
-                "weight_kg": 9.0,
-                "base_total": 314,
-                "capture_rate": 45,
-                "classification": "Tiny Turtle Pokémon",
-                "generation": 1,
-                "is_legendary": False,
-                "against_stats": self.get_default_type_effectiveness(["water"]),
-            },
+        # Safely convert to dictionary, handling missing values (NaN becomes None)
+        data = row.replace({np.nan: None}).to_dict()
+        
+        # Ensure critical keys exist and are standardized for battle system
+        pokemon_dict = {
+            'name': data.get('name', 'Unknown'),
+            'pokedex_number': int(data.get('pokedex_number', 0)),
+            # Use Type_1/Type_2 if the CSV headers weren't mapped correctly, but rely on mapping
+            'type1': data.get('type1', 'Normal'), 
+            'type2': data.get('type2', None),
+            
+            # Core Stats - ensure they are integers for calculation
+            'hp': int(data.get('hp', 50)),
+            'attack': int(data.get('attack', 50)),
+            'defense': int(data.get('defense', 50)),
+            'special_attack': int(data.get('special_attack', 50)),
+            'special_defense': int(data.get('special_defense', 50)),
+            'speed': int(data.get('speed', 50)),
+            'abilities': data.get('abilities', '[]')
+            # The 'against_' keys are kept implicitly in 'data' but are not essential for core battle logic (type chart handles it)
         }
-        print("✓ Loaded default Pokémon data")
+        
+        # Clean up type2 if it's an empty string or 'None'
+        if pokemon_dict['type2'] in ('', 'None', None):
+            pokemon_dict['type2'] = None
+        
+        return pokemon_dict
 
-    def get_default_type_effectiveness(self, types: List[str]) -> Dict[str, float]:
-        """Get default type effectiveness multipliers."""
-        effectiveness = {f"against_{t}": 1.0 for t in [
-            "bug", "dark", "dragon", "electric", "fairy", "fight", "fire", "flying",
-            "ghost", "grass", "ground", "ice", "normal", "poison", "psychic", "rock",
-            "steel", "water"
-        ]}
+    def get_pokemon_by_name(self, name: str) -> Optional[Dict]:
+        """Retrieve Pokémon data by name."""
+        if self.pokedex.empty:
+            return None
+            
+        try:
+            # Look up by the standardized lowercase index
+            row = self.pokedex.loc[name.lower()]
+            
+            # If it returns a DataFrame (multiple matches), take the first one
+            if isinstance(row, pd.DataFrame):
+                row = row.iloc[0]
+                
+            return self._extract_pokemon_data(row)
+        except KeyError:
+            return None
 
-        type_multipliers = {
-            "grass": {
-                "against_fire": 2.0, "against_flying": 2.0, "against_ice": 2.0,
-                "against_poison": 2.0, "against_bug": 2.0, "against_water": 0.5,
-                "against_electric": 0.5, "against_grass": 0.5, "against_ground": 0.5,
-            },
-            "poison": {
-                "against_ground": 2.0, "against_psychic": 2.0, "against_grass": 0.5,
-                "against_fight": 0.5, "against_poison": 0.5, "against_bug": 0.5,
-                "against_fairy": 0.5,
-            },
-            "fire": {
-                "against_water": 2.0, "against_ground": 2.0, "against_rock": 2.0,
-                "against_bug": 0.5, "against_steel": 0.5, "against_fire": 0.5,
-                "against_grass": 0.5, "against_ice": 0.5, "against_fairy": 0.5,
-            },
-            "water": {
-                "against_electric": 2.0, "against_grass": 2.0, "against_steel": 0.5,
-                "against_fire": 0.5, "against_water": 0.5, "against_ice": 0.5,
-            },
-        }
-
-        for pokemon_type in types:
-            if pokemon_type in type_multipliers:
-                for stat, multiplier in type_multipliers[pokemon_type].items():
-                    effectiveness[stat] *= multiplier
-
-        return effectiveness
-
-    def get_pokemon_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get Pokémon data by name (case-insensitive)."""
-        name = name.lower().strip()
-        for pokemon in self.pokemon_data.values():
-            if pokemon["name"].lower() == name:
-                return pokemon.copy()
+    def get_pokemon_by_number(self, number: int) -> Optional[Dict]:
+        """Retrieve Pokémon data by Pokedex number."""
+        if self.pokedex.empty:
+            return None
+        
+        try:
+            # Filter the DataFrame based on the 'pokedex_number' column
+            match = self.pokedex[self.pokedex['pokedex_number'] == number]
+            
+            if not match.empty:
+                return self._extract_pokemon_data(match.iloc[0])
+        except Exception:
+            pass # Ignore if the 'pokedex_number' column is missing/corrupted
+            
         return None
 
-    def get_pokemon_by_number(self, number: int) -> Optional[Dict[str, Any]]:
-        """Get Pokémon data by Pokédex number."""
-        if number in self.pokemon_data:
-            return self.pokemon_data[number].copy()
-        return None
+    def get_pokemon_list(self, limit: int = 6) -> List[Dict]:
+        """Returns a list of normalized Pokémon records for display."""
+        if self.pokedex.empty:
+            return []
+            
+        # Get the first 'limit' rows and extract data
+        return [self._extract_pokemon_data(row) for _, row in self.pokedex.head(limit).iterrows()]
 
-    def search_pokemon(self, query: str) -> List[Dict[str, Any]]:
-        """Search Pokémon by partial name or number."""
-        results: List[Dict[str, Any]] = []
-        query_lower = query.lower()
-        is_digit = query.isdigit()
-        for pokemon in self.pokemon_data.values():
-            if query_lower in pokemon["name"].lower():
-                results.append(pokemon.copy())
-            elif is_digit and int(query) == pokemon["pokedex_number"]:
-                results.append(pokemon.copy())
-        return results
+    # --- Type Effectiveness Calculation ---
 
-    def get_all_pokemon_names(self) -> List[str]:
-        return [pokemon["name"] for pokemon in self.pokemon_data.values()]
+    def get_type_effectiveness(self, attacking_type: str, defending_types: List[str]) -> float:
+        """
+        Calculates the damage multiplier for an attacking type against 
+        a single or dual-type defender.
+        """
+        final_multiplier = 1.0
+        attacking_type = attacking_type.lower()
+        
+        if attacking_type not in TYPE_MULTIPLIERS:
+            return 1.0
+            
+        attack_multipliers = TYPE_MULTIPLIERS[attacking_type]
+        
+        for defender_type in defending_types:
+            if not defender_type:
+                continue
+                
+            defender_type = defender_type.lower()
+            
+            # The key in our lookup dictionary is formatted "against_type"
+            lookup_key = f"against_{defender_type}"
+            
+            # Get the specific multiplier for this interaction, default to 1.0 if not found
+            multiplier = attack_multipliers.get(lookup_key, 1.0)
+            
+            # Multiply the cumulative effectiveness
+            final_multiplier *= multiplier
+            
+        return final_multiplier
 
-    def get_pokemon_list(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        pokemon_list = sorted(
-            self.pokemon_data.values(), key=lambda item: item["pokedex_number"]
-        )
-        if limit:
-            return [pokemon.copy() for pokemon in pokemon_list[:limit]]
-        return [pokemon.copy() for pokemon in pokemon_list]
 
-
-# Global instance for convenient imports
-pokemon_db = PokemonDatabase()
-
-
+# Global instance for easy access in other modules (e.g., battle_system.py)
+pokemon_db = Pokedex()

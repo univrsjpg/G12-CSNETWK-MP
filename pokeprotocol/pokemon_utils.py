@@ -61,21 +61,34 @@ def _normalize_abilities(raw: Any) -> List[str]:
     return normalized
 
 
-def normalize_pokemon_record(raw: Dict[str, Any], fallback_name: str = "Unknown") -> Dict[str, Any]:
+def normalize_pokemon_record(raw_record: Dict[str, Any], name: str) -> Dict[str, Any]:
     """
-    Convert the raw dictionary returned by load_pokemon.Pokedex into plain
-    Python data structures that are safe to serialize.
+    Takes a raw dictionary record from the CSV loading process and
+    formats it into a standard battle-ready dictionary, ensuring all
+    essential keys are present.
     """
-    return {
-        "name": raw.get("name", fallback_name) or fallback_name,
-        "type": _normalize_types(raw.get("type"), raw.get("type1"), raw.get("type2")),
-        "hp": _to_int(raw.get("hp"), 50),
-        "attack": _to_int(raw.get("attack"), 50),
-        "defense": _to_int(raw.get("defense"), 50),
-        "special_attack": _to_int(raw.get("special_attack"), 50),
-        "special_defense": _to_int(raw.get("special_defense"), 50),
-        "speed": _to_int(raw.get("speed"), 50),
-        "abilities": _normalize_abilities(raw.get("abilities")),
+    
+    # Ensure essential type and stats keys are present with safe defaults
+    normalized = {
+        # Required keys for BattleSystem
+        'name': raw_record.get('Name', name),
+        'pokedex_number': raw_record.get('Pokedex_Number', 0),
+        'type1': raw_record.get('Type_1', 'Normal'),  # <-- CRITICAL: Default to 'Normal'
+        'type2': raw_record.get('Type_2', None),     # <-- CRITICAL: Default to None
+        
+        # Stats (use default if missing from raw data)
+        'hp': int(raw_record.get('HP', 1)),
+        'attack': int(raw_record.get('Attack', 1)),
+        'defense': int(raw_record.get('Defense', 1)),
+        'special_attack': int(raw_record.get('Sp_Atk', 1)),
+        'special_defense': int(raw_record.get('Sp_Def', 1)),
+        'speed': int(raw_record.get('Speed', 1)),
     }
+    
+    # Ensure Type 2 is None if it's an empty string or 'NaN' from CSV
+    if normalized['type2'] in ('', 'nan', None):
+        normalized['type2'] = None
+        
+    return normalized
 
 
