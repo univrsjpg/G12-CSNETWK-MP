@@ -10,6 +10,8 @@ import sys
 import time
 from typing import Optional, Tuple
 from base_protocol import PokeProtocolBase
+from load_pokemon import Pokedex
+from pokemon_utils import normalize_pokemon_record
 
 
 class PokeProtocolJoiner(PokeProtocolBase):
@@ -20,6 +22,7 @@ class PokeProtocolJoiner(PokeProtocolBase):
         self.host_address = (host_ip, host_port)
         self.seed: Optional[int] = None
         self.battle_state = "DISCONNECTED"
+        self.pokedex = Pokedex()
         
     def run(self):
         """Main joiner runner"""
@@ -171,75 +174,20 @@ class PokeProtocolJoiner(PokeProtocolBase):
         print("CHOOSE YOUR POKÉMON")
         print("="*50)
         
-        # Pokémon selection
-        pokemons = {
-            "1": {"name": "Charizard", "type": ["Fire", "Flying"]},
-            "2": {"name": "Blastoise", "type": ["Water"]},
-            "3": {"name": "Venusaur", "type": ["Grass", "Poison"]},
-            "4": {"name": "Pikachu", "type": ["Electric"]}
-        }
-        
-        print("Available Pokémon:")
-        for key, poke in pokemons.items():
-            print(f"  [{key}] {poke['name']} ({'/'.join(poke['type'])})")
-        
-        choice = input("\nSelect Pokémon [1-4]: ").strip()
-        pokemon_info = pokemons.get(choice, pokemons["1"])
-        pokemon_name = pokemon_info["name"]
-        
+        pokemon_name = input("Enter the name of the pokemon: ").strip()
+        pokemon = self.fetch_pokemon(pokemon_name)
+        if not pokemon:
+            print("✗ Pokémon not found in the Pokédex.")
+            return
+
         # Get stat boosts
         try:
-            sp_atk = int(input(f"Special Attack boosts for {pokemon_name} [3]: ").strip() or "3")
-            sp_def = int(input(f"Special Defense boosts for {pokemon_name} [2]: ").strip() or "2")
-        except ValueError:
+            sp_atk = int(pokemon.get("special_attack", 3))
+            sp_def = int(pokemon.get("special_defense", 2))
+        except (TypeError, ValueError):
             sp_atk, sp_def = 3, 2
-            print("Using default values")
+            print("Using default values: 3 special attack, 2 special defense")
         
-        # Default stats for Pokémon
-        pokemon_stats = {
-            "Charizard": {
-                "name": "Charizard",
-                "type": ["Fire", "Flying"],
-                "hp": 100,
-                "attack": 84,
-                "defense": 78,
-                "special_attack": 109,
-                "special_defense": 85,
-                "speed": 100
-            },
-            "Blastoise": {
-                "name": "Blastoise",
-                "type": ["Water"],
-                "hp": 100,
-                "attack": 83,
-                "defense": 100,
-                "special_attack": 85,
-                "special_defense": 105,
-                "speed": 78
-            },
-            "Venusaur": {
-                "name": "Venusaur",
-                "type": ["Grass", "Poison"],
-                "hp": 100,
-                "attack": 82,
-                "defense": 83,
-                "special_attack": 100,
-                "special_defense": 100,
-                "speed": 80
-            },
-            "Pikachu": {
-                "name": "Pikachu",
-                "type": ["Electric"],
-                "hp": 80,
-                "attack": 55,
-                "defense": 40,
-                "special_attack": 50,
-                "special_defense": 50,
-                "speed": 90
-            }
-        }
-        
-        pokemon = pokemon_stats.get(pokemon_name, pokemon_stats["Pikachu"])
         stat_boosts = {
             "special_attack_uses": sp_atk,
             "special_defense_uses": sp_def
@@ -254,14 +202,15 @@ class PokeProtocolJoiner(PokeProtocolBase):
             stat_boosts=stat_boosts
         )
         
-        if self.send_message(message, self.host_address):
-            print(f"\n✓ Sent battle setup for {pokemon_name}")
+        if self.send_message(message, self.peer_address):
+            print(f"\n✓ Sent BATTLE_SETUP message")
+            print(f"  Pokémon: {pokemon_name}")
             print(f"  Stat boosts: {stat_boosts}")
             
-            # Wait for host's setup
+            # Wait for host's response
             self.wait_for_host_setup()
         else:
-            print("✗ Failed to send battle setup")
+            print("✗ Failed to send BATTLE_SETUP")
     
     def wait_for_host_setup(self):
         """Wait for BATTLE_SETUP from host"""
@@ -298,6 +247,16 @@ class PokeProtocolJoiner(PokeProtocolBase):
             print("="*50)
         else:
             print("✗ Failed to receive host's setup or timeout")
+    
+    def fetch_pokemon(self, pokemon_name: str):
+        """Load and normalize Pokémon information from the Pokédex."""
+        try:
+            raw = self.pokedex.get_pokemon(pokemon_name)
+        except KeyError:
+            return None
+        if not raw:
+            return None
+        return normalize_pokemon_record(raw, pokemon_name)
     
     def show_status(self):
         """Display current status"""
