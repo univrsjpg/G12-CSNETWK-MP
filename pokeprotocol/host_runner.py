@@ -217,7 +217,6 @@ class PokeProtocolHost(PokeProtocolBase):
             print(f"✓ Spectator accepted")
         else:
             print("✗ Failed to send spectator response") 
-            
     
     def start_battle_setup(self):
         """Start the battle setup phase"""
