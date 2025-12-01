@@ -10,6 +10,8 @@ import json
 import sys
 from typing import Optional, Tuple
 from base_protocol import PokeProtocolBase
+from load_pokemon import Pokedex
+from pokemon_utils import normalize_pokemon_record
 
 
 class PokeProtocolHost(PokeProtocolBase):
@@ -20,6 +22,7 @@ class PokeProtocolHost(PokeProtocolBase):
         self.seed: Optional[int] = None
         self.spectators = []
         self.battle_state = "WAITING_FOR_CONNECTION"
+        self.pokedex = Pokedex()
         
     def run(self):
         """Main host runner"""
@@ -79,7 +82,7 @@ class PokeProtocolHost(PokeProtocolBase):
                 if self.connected:
                     self.start_battle_setup()
                 else:
-                    print("No player connected yet!")
+                    print("Player not connected yet!")
             elif choice == "4":
                 self.show_status()
             elif choice == "5":
@@ -213,7 +216,7 @@ class PokeProtocolHost(PokeProtocolBase):
         if self.send_message(message, address):
             print(f"✓ Spectator accepted")
         else:
-            print("✗ Failed to send spectator response")
+            print("✗ Failed to send spectator response") 
     
     def start_battle_setup(self):
         """Start the battle setup phase"""
@@ -221,50 +224,17 @@ class PokeProtocolHost(PokeProtocolBase):
         print("BATTLE SETUP PHASE")
         print("="*50)
         
-        # Get Pokémon choice from user
-        pokemon_name = input("Enter your Pokémon name [Charizard]: ").strip() or "Charizard"
-        
-        # Default Pokémon data (can be expanded)
-        pokemon_data = {
-            "Charizard": {
-                "name": "Charizard",
-                "type": ["Fire", "Flying"],
-                "hp": 100,
-                "attack": 84,
-                "defense": 78,
-                "special_attack": 109,
-                "special_defense": 85,
-                "speed": 100
-            },
-            "Blastoise": {
-                "name": "Blastoise",
-                "type": ["Water"],
-                "hp": 100,
-                "attack": 83,
-                "defense": 100,
-                "special_attack": 85,
-                "special_defense": 105,
-                "speed": 78
-            },
-            "Venusaur": {
-                "name": "Venusaur",
-                "type": ["Grass", "Poison"],
-                "hp": 100,
-                "attack": 82,
-                "defense": 83,
-                "special_attack": 100,
-                "special_defense": 100,
-                "speed": 80
-            }
-        }
-        
-        pokemon = pokemon_data.get(pokemon_name, pokemon_data["Charizard"])
-        
+        pokemon_name = input("Enter the name of the pokemon: ").strip()
+        pokemon = self.fetch_pokemon(pokemon_name)
+        if not pokemon:
+            print("✗ Pokémon not found in the Pokédex.")
+            return
+
         # Get stat boosts
         try:
-            sp_atk = int(input("Special Attack boosts [3]: ").strip() or "3")
-            sp_def = int(input("Special Defense boosts [2]: ").strip() or "2")
-        except ValueError:
+            sp_atk = int(pokemon.get("special_attack", 3))
+            sp_def = int(pokemon.get("special_defense", 2))
+        except (TypeError, ValueError):
             sp_atk, sp_def = 3, 2
             print("Using default values: 3 special attack, 2 special defense")
         
@@ -291,6 +261,16 @@ class PokeProtocolHost(PokeProtocolBase):
             self.wait_for_battle_setup()
         else:
             print("✗ Failed to send BATTLE_SETUP")
+    
+    def fetch_pokemon(self, pokemon_name: str):
+        """Load and normalize Pokémon information from the Pokédex."""
+        try:
+            raw = self.pokedex.get_pokemon(pokemon_name)
+        except KeyError:
+            return None
+        if not raw:
+            return None
+        return normalize_pokemon_record(raw, pokemon_name)
     
     def wait_for_battle_setup(self):
         """Wait for BATTLE_SETUP from joiner"""
@@ -351,7 +331,6 @@ class PokeProtocolHost(PokeProtocolBase):
 
 def main():
     """Main function for host runner"""
-    # Get port from command line argument or prompt
     port = 5000
     if len(sys.argv) > 1:
         try:

@@ -6,7 +6,8 @@ Run this file to get a menu to choose which to run.
 import os
 import sys
 import subprocess
-
+import load_pokemon
+from load_pokemon import Pokedex, Pokemon
 
 def clear_screen():
     """Clear the terminal screen"""
@@ -152,7 +153,6 @@ def show_documentation():
     print()
     print("="*60)
     input("\nPress Enter to return to menu...")
-
 
 def main():
     """Main launcher function"""
