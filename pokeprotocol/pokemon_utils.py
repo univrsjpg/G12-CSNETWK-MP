@@ -91,4 +91,3 @@ def normalize_pokemon_record(raw_record: Dict[str, Any], name: str) -> Dict[str,
         
     return normalized
 
-

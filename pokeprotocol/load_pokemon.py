@@ -39,7 +39,6 @@ class Pokemon:
             'attack': self.attack,
             'defense': self.defense,
             'special_attack': self.special_attack,
-
             'special_defense': self.special_defense,
             'speed': self.speed,
             'against_bug': self.against_bug,
