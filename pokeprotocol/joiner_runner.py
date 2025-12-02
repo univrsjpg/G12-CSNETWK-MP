@@ -8,6 +8,7 @@ import socket
 import json
 import sys
 import time
+import threading
 from typing import Optional, Tuple, Dict, Any
 from base_protocol import PokeProtocolBase
 from pokemon_utils import normalize_pokemon_record
@@ -15,6 +16,7 @@ from pokemon_data import pokemon_db
 import socket
 CHAT_PORT = 9999
 from battle_system import BattleSystem, battle_system
+from chatManager import ChatManager
 
 
 class PokeProtocolJoiner(PokeProtocolBase):
@@ -31,6 +33,25 @@ class PokeProtocolJoiner(PokeProtocolBase):
         self.battle_engine: Optional[BattleSystem] = None 
         self.is_host_turn = True
         self.local_turn_report: Optional[Dict] = None # Added for comparison
+        self.chat_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.chat_socket.bind(("0.0.0.0", 0))
+
+
+
+    def start_chat_listener(self):
+        def listen():
+            while self.chat_running:
+                try:
+                    data, addr = self.chat_socket.recvfrom(4096)
+                    print(f"\n💬 {data.decode()}")
+                except:
+                    pass
+
+        self.chat_running = True
+        thread = threading.Thread(target=listen, daemon=True)
+        thread.start()
+
+
 
     def run(self):
         """Main joiner runner"""
@@ -75,11 +96,32 @@ class PokeProtocolJoiner(PokeProtocolBase):
                      self.start_turn()
                 else:
                     print("✗ Not your turn or battle not ready.")
+            elif choice == "7":
+                self.send_chat_message()
             elif choice == "help":
                 self.show_help()
             else:
                 print("Invalid option. Type 'help' for commands.")
     
+    def send_chat_message(self):
+        if not self.chat_running:
+            print("✗ Chat is not active. Connect as player or spectator first.")
+            return
+
+        text = input("Enter chat message: ").strip()
+        if not text:
+            print("✗ Empty message.")
+            return
+
+        msg = f"[Spectator] {text}" if self.battle_state == "SPECTATING" else f"[Player] {text}"
+        try:
+            self.chat_socket.sendto(msg.encode(), (self.host_address[0], CHAT_PORT))
+            print("✓ Message sent!")
+        except Exception as e:
+            print(f"✗ Chat send error: {e}")
+
+
+
     def print_menu(self):
         """Display joiner menu"""
         print("\n" + "-"*40)
@@ -147,7 +189,8 @@ class PokeProtocolJoiner(PokeProtocolBase):
             self.peer_address = address
             self.connected = True
             self.battle_state = "CONNECTED"
-            # self.connect_chat(name="Player") 
+            self.connect_chat(name="Player")
+             
             
             print("\n" + "="*50)
             print("✅ CONNECTION SUCCESSFUL!")
@@ -176,7 +219,9 @@ class PokeProtocolJoiner(PokeProtocolBase):
                 print("\n✅ ACCEPTED AS SPECTATOR!")
                 print(f"Status: {response.get('status', 'Unknown')}")
                 print(f"Battle State: {response.get('battle_state', 'Unknown')}")
-                self.battle_state = "SPECTATING"
+                self.battle_state = "SPECTATING" 
+                self.start_chat_listener()
+
             else:
                 print("✗ No response from host or request denied")
         else:
@@ -277,12 +322,18 @@ class PokeProtocolJoiner(PokeProtocolBase):
             print("✗ Failed to receive host's setup or timeout. Cannot proceed to turn.")
     
     def wait_for_battle_messages(self):
-        """Main loop for turn-based state"""
+        """
+        Main loop for turn-based state.
+        FIX: Use a small timeout to poll for turn switching (since Host doesn't send a turn switch message).
+        """
         print("\n⏳ Entering battle loop. Waiting for Host's first move...")
+        
+        # FIX: Set timeout for non-blocking read to allow periodic turn check
+        self.socket.settimeout(0.5) 
         
         while self.battle_state not in ["ERROR", "GAME_OVER", "DISCONNECTED"]:
             try:
-                message, address = self.receive_message(timeout=None)
+                message, address = self.receive_message(timeout=0.5) # Use the short timeout
                 
                 if message:
                     message_type = message.get('message_type')
@@ -316,18 +367,30 @@ class PokeProtocolJoiner(PokeProtocolBase):
                         elif message_type == 'RESOLUTION_REQUEST':
                             self.handle_resolution_request(message)
                         
-                    elif self.battle_state == "WAITING_FOR_MOVE" and not self.is_host_turn:
-                        # This is the Joiner's turn to attack
-                        self.start_turn()
-                        
                     elif message_type == 'GAME_OVER':
                         print(f"\n🛑 GAME OVER! {message.get('winner')} won.") 
                         self.battle_state = "GAME_OVER"
                         return
+                
+                # After message processing (or timeout): Check if it's the Joiner's turn.
+                if self.battle_state == "WAITING_FOR_MOVE" and not self.is_host_turn:
+                    print("--> Detected turn switch. Initiating attack.")
+                    self.start_turn() # This breaks out of the passive loop to start the action flow
+                    # IMPORTANT: start_turn calls wait_for_battle_messages again upon completion, restarting the loop.
 
+            except socket.timeout:
+                # Timeout is normal now; check turn state again
+                if self.battle_state == "WAITING_FOR_MOVE" and not self.is_host_turn:
+                     print("--> Timeout check: Initiating attack.")
+                     self.start_turn()
+                continue
+                
             except Exception as e:
                 print(f"Error in battle loop: {e}")
                 break
+        
+        # Reset timeout behavior after loop ends
+        self.socket.settimeout(None)
 
     def calculate_opponent_attack(self, move_name: str, attacker: Dict, defender: Dict) -> Dict:
         """Helper to calculate and apply damage for the reactive peer (Joiner defending)."""
@@ -364,8 +427,9 @@ class PokeProtocolJoiner(PokeProtocolBase):
 
     def start_turn(self):
         """NEW Step 1: ATTACK_COMMIT (Joiner's action: Calculate damage and send report immediately)"""
+        # Ensure we only proceed if it is indeed the Joiner's turn
         if self.battle_state != "WAITING_FOR_MOVE" or self.is_host_turn:
-            self.wait_for_battle_messages()
+            # If start_turn was called incorrectly, exit gracefully and return to passive wait
             return
             
         attacker = self.joiner_pokemon
@@ -459,7 +523,7 @@ class PokeProtocolJoiner(PokeProtocolBase):
                 
                 print(f"Warning: Received unexpected message type: {message_type}. Waiting for expected response.")
             
-        print("✗ Timeout or invalid message. Maximum retries reached. Battle status set to ERROR.")
+        print("✗ Timeout or invalid message. Maximum retries reached. Batstle status set to ERROR.")
         self.battle_state = "ERROR"
 
     def send_calculation_confirm(self):
@@ -584,9 +648,8 @@ class PokeProtocolJoiner(PokeProtocolBase):
         
         return raw
 
-    def print_sample_pokemon(self, limit: int = 6):
+    def print_sample_pokemon(self, limit: int = 10):
         """Display quick choices to help the player."""
-        print("\nSample Pokémon choices:")
         pokemon_list = self.pokedex.get_pokemon_list(limit)
         
         for entry in pokemon_list:
@@ -599,6 +662,7 @@ class PokeProtocolJoiner(PokeProtocolBase):
             pokedex_num = entry.get('pokedex_number', '???')
             
             print(f"  [{pokedex_num:>3}] {entry.get('name', '???')} ({types})")
+        print("...")
     
     def show_status(self):
         """Display current status"""

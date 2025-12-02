@@ -15,6 +15,7 @@ from pokemon_data import pokemon_db
 from chatManager import ChatManager
 from battle_system import BattleSystem, battle_system
 
+CHAT_PORT = 9999
 
 class PokeProtocolHost(PokeProtocolBase):
     """Host implementation of PokeProtocol"""
@@ -30,6 +31,7 @@ class PokeProtocolHost(PokeProtocolBase):
         self.battle_engine: Optional[BattleSystem] = None 
         self.is_host_turn = True
         self.opponent_calc_report: Optional[Dict[str, str]] = None
+        self.local_ip: str = "127.0.0.1" 
         
     def run(self):
         self.print_banner()
@@ -37,10 +39,10 @@ class PokeProtocolHost(PokeProtocolBase):
         # --- START CHAT MANAGER ---
         print("Starting Chat Server (port 9999)...")
         # Assuming ChatManager is defined elsewhere and works correctly
-        # self.chat = ChatManager()
-        # self.chat.start()
+        print("Starting Chat Server (port 9999)...")
+        self.chat = ChatManager(self.local_ip)
+        self.chat.start()
         print("Chat Server Online!")
-
         if not self.create_socket():
             return
             
@@ -69,7 +71,7 @@ class PokeProtocolHost(PokeProtocolBase):
                 s.close()
             except:
                 local_ip = "127.0.0.1"
-            
+            self.local_ip = local_ip
             print(f"✓ Host listening on:")
             print(f"  IP Address: {local_ip}")
             print(f"  Port: {self.port}")
@@ -111,10 +113,36 @@ class PokeProtocolHost(PokeProtocolBase):
                         self.start_turn()
                 else:
                     print("✗ Battle setup not complete. Use option [3] first.")
+            elif choice == "7":
+                self.send_chat_message()
             elif choice == "help":
                 self.show_help()
             else:
                 print("Invalid option. Type 'help' for commands.")
+    
+    def send_chat_message(self):
+        if not self.connected:
+            print("✗ Not connected.")
+            return
+        
+        text = input("Enter message: ").strip()
+        if not text:
+            return
+        
+        msg = f"{self.username}: {text}"
+
+        # Send to player
+        self.chat.socket.sendto(msg.encode(), ("0.0.0.0", CHAT_PORT))
+
+        # Send to spectators
+        broadcast_msg = self.build_message(
+            message_type="CHAT",
+            sender=self.username,
+            text=text
+        )
+        self.broadcast_to_spectators(broadcast_msg)
+
+
     
     def print_menu(self):
         """Display host menu"""
@@ -130,6 +158,7 @@ class PokeProtocolHost(PokeProtocolBase):
             action = 'HOST ATTACK' if self.is_host_turn else 'WAITING FOR OPPONENT COMMIT'
             print(f"[6] {action}")
         print("[5] Exit")
+        print("[7] Send chat message")
         print("Type 'help' for detailed commands")
         print("-"*40)
     
@@ -184,6 +213,18 @@ class PokeProtocolHost(PokeProtocolBase):
         print(f"Message: {report['status_message']}")
         print("-----------------------------------")
         
+        # Send report to spectators
+        spec_msg = self.build_message(
+            message_type="BATTLE_EVENT",
+            attacker=report['attacker'],
+            move_used=move_name,
+            damage=report['damage_dealt'],
+            defender_hp=report['defender_hp_remaining'],
+            status=report['status_message']
+        )
+        self.broadcast_to_spectators(spec_msg)
+
+
         # 3. Send ATTACK_COMMIT (using CALCULATION_REPORT message structure)
         seq_num = self.generate_sequence_number()
         message = self.build_message(
@@ -230,6 +271,7 @@ class PokeProtocolHost(PokeProtocolBase):
         # Handle other messages (e.g., GAME_OVER, CHAT) here if necessary
         elif message and message.get('message_type') == 'GAME_OVER':
              print(f"\n🛑 GAME OVER! {message.get('winner')} won.")
+             
              self.battle_state = "GAME_OVER"
         
         # If timeout or invalid message, return to main_loop menu.
@@ -269,6 +311,17 @@ class PokeProtocolHost(PokeProtocolBase):
         else:
             print(f"⚠️ Calculation discrepancy! Local HP: {local_hp}, Opponent HP: {opponent_hp}")
             self.resolve_discrepancy(local_report)
+        # Forward joiner's attack result to spectators
+        spec_msg = self.build_message(
+            message_type="BATTLE_EVENT",
+            attacker=local_report['attacker'],
+            move_used=local_report['move_used'],
+            damage=local_report['damage_dealt'],
+            defender_hp=local_report['defender_hp_remaining'],
+            status=local_report['status_message']
+        )
+        self.broadcast_to_spectators(spec_msg)
+
 
     def wait_for_report_and_confirm(self, local_report: Dict):
         """Modified: Host attacked, now waits ONLY for CONFIRM/RESOLUTION (with retries)"""
@@ -392,6 +445,21 @@ class PokeProtocolHost(PokeProtocolBase):
             loser=loser
         )
         
+        spec_msg = self.build_message(
+            message_type="TURN_CHANGE",
+            current_turn="HOST" if self.is_host_turn else "JOINER"
+        )
+        self.broadcast_to_spectators(spec_msg)
+
+        gameover_msg = self.build_message(
+            message_type="GAME_OVER",
+            winner=winner,
+            loser=loser
+        )
+        self.broadcast_to_spectators(gameover_msg)
+
+
+
         max_retries = 3
         timeout = 5
         
@@ -583,9 +651,8 @@ class PokeProtocolHost(PokeProtocolBase):
         
         return raw
 
-    def print_sample_pokemon(self, limit: int = 6):
+    def print_sample_pokemon(self, limit: int = 10):
         """Display a quick list of Pokémon options."""
-        print("\nSample Pokémon choices:")
         pokemon_list = self.pokedex.get_pokemon_list(limit)
         
         for entry in pokemon_list:
@@ -598,6 +665,7 @@ class PokeProtocolHost(PokeProtocolBase):
             pokedex_num = entry.get('pokedex_number', '???')
             
             print(f"  [{pokedex_num:>3}] {entry.get('name', '???')} ({types})")
+        print("...")
     
     def wait_for_battle_setup(self):
         """Wait for BATTLE_SETUP from joiner"""
