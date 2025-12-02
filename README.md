@@ -2,6 +2,11 @@
 
 We acknowledge the use of AI in the creation of this project. AI was used for brainstorming and code generation, but the code generation was proofread before its implementation.
 
+# IMPORTANT LIBRARIES:
+socket
+os
+sys
+
 # TO RUN THE FILE:
 py launcher.py
 OR
