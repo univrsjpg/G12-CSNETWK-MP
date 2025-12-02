@@ -277,12 +277,19 @@ class PokeProtocolJoiner(PokeProtocolBase):
             print("✗ Failed to receive host's setup or timeout. Cannot proceed to turn.")
     
     def wait_for_battle_messages(self):
-        """Main loop for turn-based state"""
+        """
+        Main loop for turn-based state.
+        FIX: Use a small timeout to poll for turn switching (since Host doesn't send a turn switch message).
+        """
         print("\n⏳ Entering battle loop. Waiting for Host's first move...")
+        
+        # FIX: Set timeout for non-blocking read to allow periodic turn check
+        self.socket.settimeout(0.5) 
         
         while self.battle_state not in ["ERROR", "GAME_OVER", "DISCONNECTED"]:
             try:
-                message, address = self.receive_message(timeout=None)
+                # Use the short timeout for polling
+                message, address = self.receive_message(timeout=0.5) 
                 
                 if message:
                     message_type = message.get('message_type')
@@ -316,18 +323,31 @@ class PokeProtocolJoiner(PokeProtocolBase):
                         elif message_type == 'RESOLUTION_REQUEST':
                             self.handle_resolution_request(message)
                         
-                    elif self.battle_state == "WAITING_FOR_MOVE" and not self.is_host_turn:
-                        # This is the Joiner's turn to attack
-                        self.start_turn()
-                        
                     elif message_type == 'GAME_OVER':
                         print(f"\n🛑 GAME OVER! {message.get('winner')} won.") 
                         self.battle_state = "GAME_OVER"
                         return
+                
+                # After message processing (or timeout): Check if it's the Joiner's turn.
+                if self.battle_state == "WAITING_FOR_MOVE" and not self.is_host_turn:
+                    # Polling logic detected turn switch
+                    print("--> Detected turn switch. Initiating attack.")
+                    self.start_turn() 
+                    # IMPORTANT: start_turn calls wait_for_battle_messages again upon completion, restarting the loop.
 
+            except socket.timeout:
+                # Timeout is normal now; check turn state again
+                if self.battle_state == "WAITING_FOR_MOVE" and not self.is_host_turn:
+                     # Polling logic triggered by timeout to check turn
+                     self.start_turn()
+                continue
+                
             except Exception as e:
                 print(f"Error in battle loop: {e}")
                 break
+        
+        # Reset timeout behavior after loop ends
+        self.socket.settimeout(None)
 
     def calculate_opponent_attack(self, move_name: str, attacker: Dict, defender: Dict) -> Dict:
         """Helper to calculate and apply damage for the reactive peer (Joiner defending)."""
@@ -364,8 +384,9 @@ class PokeProtocolJoiner(PokeProtocolBase):
 
     def start_turn(self):
         """NEW Step 1: ATTACK_COMMIT (Joiner's action: Calculate damage and send report immediately)"""
+        # Ensure we only proceed if it is indeed the Joiner's turn
         if self.battle_state != "WAITING_FOR_MOVE" or self.is_host_turn:
-            self.wait_for_battle_messages()
+            # If start_turn was called incorrectly, exit gracefully and return to passive wait
             return
             
         attacker = self.joiner_pokemon
@@ -431,7 +452,7 @@ class PokeProtocolJoiner(PokeProtocolBase):
 
 
     def wait_for_report_and_confirm(self):
-        """Modified: Joiner attacked, now waits ONLY for CONFIRM/RESOLUTION"""
+        """Modified: Joiner attacked, now waits ONLY for CONFIRM/RESOLUTION (with retries)"""
         max_retries = 3
         timeout = 5 # 5 seconds
         
@@ -614,6 +635,16 @@ class PokeProtocolJoiner(PokeProtocolBase):
             print(f"Battle Seed: {self.seed}")
         else:
             print("Host: Not connected")
+        
+        # Display Pokémon health if battle is active
+        if self.battle_state in ["WAITING_FOR_MOVE", "WAITING_FOR_CONFIRM", "GAME_OVER"] and self.host_pokemon and self.joiner_pokemon:
+            joiner_hp = f"{self.joiner_pokemon['current_hp']}/{self.joiner_pokemon['max_hp']}"
+            host_hp = f"{self.host_pokemon['current_hp']}/{self.host_pokemon['max_hp']}"
+            print("\n--- POKÉMON HEALTH ---")
+            print(f"Your Pokémon ({self.joiner_pokemon['name']}): HP {joiner_hp}")
+            print(f"Opponent ({self.host_pokemon['name']}): HP {host_hp}")
+            print("----------------------")
+            
         print("="*50)
 
 

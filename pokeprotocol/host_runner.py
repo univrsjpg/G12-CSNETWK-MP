@@ -8,6 +8,7 @@ import socket
 import random
 import json
 import sys
+import time
 from typing import Optional, Tuple, Dict, Any
 from base_protocol import PokeProtocolBase
 from pokemon_utils import normalize_pokemon_record
@@ -104,11 +105,14 @@ class PokeProtocolHost(PokeProtocolBase):
             elif choice == "6":
                 # Check for passive turn handler before starting own turn
                 if self.battle_state == "WAITING_FOR_MOVE":
-                    # Check for passive turn handler before starting own turn
-                    if not self.is_host_turn:
-                         self.wait_for_opponent_commit()
-                    else:
+                    # FIX: Option 6 only triggers the Host's attack, 
+                    # as passive listening is now automatic (called in end_turn).
+                    if self.is_host_turn:
                         self.start_turn()
+                    else:
+                        # If it's not the Host's turn, and they manually select 6, 
+                        # they should be reminded that the system is already listening.
+                        print("✗ Not your turn. System is passively waiting for opponent's move.")
                 else:
                     print("✗ Battle setup not complete. Use option [3] first.")
             elif choice == "help":
@@ -127,7 +131,7 @@ class PokeProtocolHost(PokeProtocolBase):
         print("[4] Show status")
         if self.battle_state == "WAITING_FOR_MOVE":
             # Menu option 6 now reflects the new simplified flow
-            action = 'HOST ATTACK' if self.is_host_turn else 'WAITING FOR OPPONENT COMMIT'
+            action = 'HOST ATTACK' if self.is_host_turn else 'WAITING FOR OPPONENT COMMIT (Listening...)'
             print(f"[6] {action}")
         print("[5] Exit")
         print("Type 'help' for detailed commands")
@@ -206,35 +210,61 @@ class PokeProtocolHost(PokeProtocolBase):
             self.battle_state = "ERROR"
     
     def wait_for_opponent_commit(self):
-        """NEW Step 1 (Reactive): Wait for Joiner's ATTACK_COMMIT (CALCULATION_REPORT)"""
-        print("\n⏳ Waiting for Joiner's attack commitment...")
-
-        # Wait for the Joiner's ATTACK_COMMIT message (which is a CALCULATION_REPORT)
-        message, _ = self.receive_message(timeout=5)
+        """
+        NEW Step 1 (Reactive): Wait for Joiner's ATTACK_COMMIT (CALCULATION_REPORT) (with retries/polling)
+        This is the blocking listener loop for the passive turn.
+        """
+        max_retries = 60 # Set high to wait ~30 seconds for opponent's move (60 * 0.5s)
+        timeout = 0.5    # Small timeout for polling
         
-        if message and message.get('message_type') == 'CALCULATION_REPORT':
-            self.send_ack(message.get('sequence_number'))
-            
-            # Host independently calculates the damage for comparison
-            move_name = message.get('move_used')
-            # Host is the defender, Joiner is the attacker
-            local_report = self.calculate_opponent_attack(move_name, self.joiner_pokemon, self.host_pokemon)
-            
-            self.battle_state = "WAITING_FOR_CONFIRM"
-            self.compare_reports_and_respond(message, local_report)
-            
-            # FIX: If the turn ended successfully in compare_reports_and_respond, we return.
-            if self.battle_state == "WAITING_FOR_MOVE": 
-                return
-
-        # Handle other messages (e.g., GAME_OVER, CHAT) here if necessary
-        elif message and message.get('message_type') == 'GAME_OVER':
-             print(f"\n🛑 GAME OVER! {message.get('winner')} won.")
-             self.battle_state = "GAME_OVER"
+        print("\n⏳ Waiting for Joiner's attack commitment (Auto-Listening)...")
         
-        # If timeout or invalid message, return to main_loop menu.
-        else:
-             print("... Still waiting or received non-turn message.")
+        # FIX: We now enter a continuous loop to wait for the packet
+        while self.battle_state == "WAITING_FOR_MOVE" and not self.is_host_turn:
+            
+            message, address = self.receive_message(timeout=timeout)
+            
+            if message:
+                message_type = message.get('message_type')
+                seq_num = message.get('sequence_number')
+
+                if message_type == 'ACK':
+                    print(f"-> Received ACK for {message.get('ack_number')}")
+                    continue
+                
+                # Critical message received: CALCULATION_REPORT (the Commit)
+                if message_type == 'CALCULATION_REPORT':
+                    self.send_ack(seq_num)
+                    print(f"✓ Received opponent's ATTACK_COMMIT (Seq: {seq_num}).")
+                    
+                    # Host independently calculates the damage for comparison
+                    move_name = message.get('move_used')
+                    local_report = self.calculate_opponent_attack(move_name, self.joiner_pokemon, self.host_pokemon)
+                    
+                    self.battle_state = "WAITING_FOR_CONFIRM"
+                    self.compare_reports_and_respond(message, local_report)
+                    
+                    # If the turn concluded successfully, the state will be reset to WAITING_FOR_MOVE by end_turn.
+                    if self.battle_state in ["WAITING_FOR_MOVE", "GAME_OVER", "TERMINATED"]: 
+                        return
+                
+                elif message_type == 'GAME_OVER':
+                    # --- CRITICAL FIX: Send ACK immediately upon receiving GAME_OVER ---
+                    if seq_num:
+                        self.send_ack(seq_num)
+                    # ------------------------------------------------------------------
+                    
+                    print(f"\n🛑 GAME OVER! {message.get('winner')} won.")
+                    self.battle_state = "GAME_OVER"
+                    return
+                
+                else:
+                    print(f"Warning: Received unexpected message type: {message_type}. Waiting for expected response.")
+            
+            # If timeout, the loop continues (polling).
+        
+        # If the loop breaks due to state change (e.g., user selected option 5)
+        print("... Host stopped listening for opponent's move.")
 
 
     def calculate_opponent_attack(self, move_name: str, attacker: Dict, defender: Dict) -> Dict:
@@ -369,7 +399,6 @@ class PokeProtocolHost(PokeProtocolBase):
         # 1. Check for win condition
         if self.joiner_pokemon['current_hp'] <= 0:
             # If win condition met, send GAME_OVER and return.
-            # FIX: The send_game_over method must handle the necessary ACK wait
             self.send_game_over(winner=self.host_pokemon['name'], loser=self.joiner_pokemon['name']) 
             return
 
@@ -378,6 +407,11 @@ class PokeProtocolHost(PokeProtocolBase):
         self.is_host_turn = not self.is_host_turn  # Reverse turn order 
         self.battle_state = "WAITING_FOR_MOVE"
         print(f"It is now the {'Host' if self.is_host_turn else 'Joiner'}'s turn.")
+        
+        # --- FIX: Automatically enter passive listening mode if turn switches to Joiner ---
+        if not self.is_host_turn:
+            self.wait_for_opponent_commit()
+        # ---------------------------------------------------------------------------------
 
     def send_game_over(self, winner: str, loser: str):
         """
@@ -663,6 +697,15 @@ class PokeProtocolHost(PokeProtocolBase):
         else:
             print("Player: Not connected")
         
+        # Display Pokémon health if battle is active
+        if self.battle_state in ["WAITING_FOR_MOVE", "WAITING_FOR_CONFIRM", "GAME_OVER"] and self.host_pokemon and self.joiner_pokemon:
+            host_hp = f"{self.host_pokemon['current_hp']}/{self.host_pokemon['max_hp']}"
+            joiner_hp = f"{self.joiner_pokemon['current_hp']}/{self.joiner_pokemon['max_hp']}"
+            print("\n--- POKÉMON HEALTH ---")
+            print(f"Your Pokémon ({self.host_pokemon['name']}): HP {host_hp}")
+            print(f"Opponent ({self.joiner_pokemon['name']}): HP {joiner_hp}")
+            print("----------------------")
+
         print(f"Spectators: {len(self.spectators)}")
         for i, spec in enumerate(self.spectators, 1):
             print(f"  {i}. {spec[0]}:{spec[1]}")
