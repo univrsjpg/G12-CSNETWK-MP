@@ -6,81 +6,77 @@ from typing import Dict, List, Optional, Any, Tuple
 # --- Type Effectiveness Data (Expanded Type Chart) ---
 # This dictionary defines what the ATTACKING type is effective against (DEFENDING type).
 TYPE_MULTIPLIERS = {
-    "grass": {
-        "against_fire": 2.0, "against_flying": 2.0, "against_ice": 2.0,
-        "against_poison": 2.0, "against_bug": 2.0, "against_water": 0.5,
-        "against_electric": 0.5, "against_grass": 0.5, "against_ground": 0.5,
-    },
-    "poison": {
-        "against_ground": 2.0, "against_psychic": 2.0, "against_grass": 0.5,
-        "against_fighting": 0.5, "against_poison": 0.5, "against_bug": 0.5,
-        "against_fairy": 0.5,
-    },
-    "fire": {
-        "against_water": 2.0, "against_ground": 2.0, "against_rock": 2.0,
-        "against_bug": 0.5, "against_steel": 0.5, "against_fire": 0.5,
-        "against_grass": 0.5, "against_ice": 0.5, "against_fairy": 0.5,
-    },
-    "water": {
-        "against_electric": 2.0, "against_grass": 2.0, "against_steel": 0.5,
-        "against_fire": 0.5, "against_water": 0.5, "against_ice": 0.5,
-    },
     "normal": {
         "against_rock": 0.5, "against_steel": 0.5, "against_ghost": 0.0,
     },
+    "fire": {
+        "against_grass": 2.0, "against_ice": 2.0, "against_bug": 2.0, "against_steel": 2.0,
+        "against_fire": 0.5, "against_water": 0.5, "against_rock": 0.5, "against_dragon": 0.5,
+    },
+    "water": {
+        "against_fire": 2.0, "against_ground": 2.0, "against_rock": 2.0,
+        "against_water": 0.5, "against_grass": 0.5, "against_dragon": 0.5,
+    },
+    "electric": {
+        "against_water": 2.0, "against_flying": 2.0,
+        "against_electric": 0.5, "against_grass": 0.5, "against_dragon": 0.5,
+        "against_ground": 0.0,
+    },
+    "grass": {
+        "against_water": 2.0, "against_ground": 2.0, "against_rock": 2.0,
+        "against_fire": 0.5, "against_grass": 0.5, "against_poison": 0.5, 
+        "against_flying": 0.5, "against_bug": 0.5, "against_dragon": 0.5, "against_steel": 0.5,
+    },
+    "ice": {
+        "against_grass": 2.0, "against_ground": 2.0, "against_flying": 2.0, "against_dragon": 2.0,
+        "against_fire": 0.5, "against_water": 0.5, "against_ice": 0.5, "against_steel": 0.5,
+    },
     "fighting": {
-        "against_normal": 2.0, "against_rock": 2.0, "against_steel": 2.0,
-        "against_ice": 2.0, "against_dark": 2.0,
-        "against_flying": 0.5, "against_poison": 0.5, "against_bug": 0.5,
-        "against_psychic": 0.5, "against_fairy": 0.5, "against_ghost": 0.0,
+        "against_normal": 2.0, "against_rock": 2.0, "against_steel": 2.0, "against_ice": 2.0, "against_dark": 2.0,
+        "against_flying": 0.5, "against_poison": 0.5, "against_bug": 0.5, "against_psychic": 0.5, "against_fairy": 0.5,
+        "against_ghost": 0.0,
+    },
+    "poison": {
+        "against_grass": 2.0, "against_fairy": 2.0,
+        "against_poison": 0.5, "against_ground": 0.5, "against_rock": 0.5, "against_ghost": 0.5,
+        "against_steel": 0.0,
+    },
+    "ground": {
+        "against_poison": 2.0, "against_rock": 2.0, "against_steel": 2.0, "against_fire": 2.0, "against_electric": 2.0,
+        "against_grass": 0.5, "against_bug": 0.5,
+        "against_flying": 0.0,
     },
     "flying": {
         "against_fighting": 2.0, "against_bug": 2.0, "against_grass": 2.0,
         "against_rock": 0.5, "against_steel": 0.5, "against_electric": 0.5,
     },
-    "ground": {
-        "against_poison": 2.0, "against_rock": 2.0, "against_steel": 2.0,
-        "against_fire": 2.0, "against_electric": 2.0,
-        "against_bug": 0.5, "against_grass": 0.5, "against_flying": 0.0,
-    },
-    "rock": {
-        "against_flying": 2.0, "against_bug": 2.0, "against_fire": 2.0,
-        "against_ice": 2.0,
-        "against_fighting": 0.5, "against_ground": 0.5, "against_steel": 0.5,
+    "psychic": {
+        "against_fighting": 2.0, "against_poison": 2.0,
+        "against_steel": 0.5, "against_psychic": 0.5,
+        "against_dark": 0.0,
     },
     "bug": {
         "against_grass": 2.0, "against_psychic": 2.0, "against_dark": 2.0,
-        "against_fighting": 0.5, "against_flying": 0.5, "against_poison": 0.5,
-        "against_ghost": 0.5, "against_steel": 0.5, "against_fire": 0.5,
-        "against_fairy": 0.5,
+        "against_fighting": 0.5, "against_flying": 0.5, "against_poison": 0.5, 
+        "against_ghost": 0.5, "against_steel": 0.5, "against_fire": 0.5, "against_fairy": 0.5,
+    },
+    "rock": {
+        "against_flying": 2.0, "against_bug": 2.0, "against_fire": 2.0, "against_ice": 2.0,
+        "against_fighting": 0.5, "against_ground": 0.5, "against_steel": 0.5,
     },
     "ghost": {
         "against_ghost": 2.0, "against_psychic": 2.0,
-        "against_dark": 0.5, "against_normal": 0.0, "against_fighting": 0.0,
-    },
-    "electric": {
-        "against_flying": 2.0, "against_water": 2.0,
-        "against_grass": 0.5, "against_electric": 0.5, "against_dragon": 0.5,
-        "against_ground": 0.0,
-    },
-    "psychic": {
-        "against_fighting": 2.0, "against_poison": 2.0,
-        "against_steel": 0.5, "against_psychic": 0.5, "against_dark": 0.0,
-    },
-    "ice": {
-        "against_flying": 2.0, "against_ground": 2.0, "against_grass": 2.0,
-        "against_dragon": 2.0,
-        "against_steel": 0.5, "against_fire": 0.5, "against_water": 0.5,
-        "against_ice": 0.5,
+        "against_dark": 0.5,
+        "against_normal": 0.0, "against_fighting": 0.0,
     },
     "dragon": {
         "against_dragon": 2.0,
-        "against_steel": 0.5, "against_fairy": 0.0,
+        "against_steel": 0.5,
+        "against_fairy": 0.0,
     },
     "steel": {
         "against_rock": 2.0, "against_ice": 2.0, "against_fairy": 2.0,
-        "against_steel": 0.5, "against_fire": 0.5, "against_water": 0.5,
-        "against_electric": 0.5,
+        "against_steel": 0.5, "against_fire": 0.5, "against_water": 0.5, "against_electric": 0.5,
     },
     "dark": {
         "against_ghost": 2.0, "against_psychic": 2.0,
