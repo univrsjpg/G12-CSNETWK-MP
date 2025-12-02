@@ -340,6 +340,16 @@ class PokeProtocolHost(PokeProtocolBase):
                 if message_type == 'CALCULATION_CONFIRM':
                     self.send_ack(seq_num)
                     print("✓ Received CALCULATION_CONFIRM. Turn complete.")
+                    
+                    # --- FIX: Explicitly check HP after receiving confirmation ---
+                    # Since damage was already applied locally before sending the commit, 
+                    # we check the opponent's HP now that the result is confirmed.
+                    if self.joiner_pokemon['current_hp'] <= 0:
+                        print("-> HP check: Opponent fainted!")
+                        self.send_game_over(winner=self.host_pokemon['name'], loser=self.joiner_pokemon['name'])
+                        return # Game over, exit
+                    # -------------------------------------------------------------
+
                     self.end_turn()
                     return # Exit successfully
                     
@@ -426,6 +436,8 @@ class PokeProtocolHost(PokeProtocolBase):
             self.send_game_over(winner=self.host_pokemon['name'], loser=self.joiner_pokemon['name']) 
             return
 
+        # 1. Check for win condition (already handled in wait_for_report_and_confirm if Host was attacker)
+        
         # 2. If no win, switch turn
         print("\n--- TURN ENDED ---")
         self.is_host_turn = not self.is_host_turn  # Reverse turn order 
@@ -667,11 +679,11 @@ class PokeProtocolHost(PokeProtocolBase):
             print(f"  [{pokedex_num:>3}] {entry.get('name', '???')} ({types})")
         print("...")
     
-    def wait_for_battle_setup(self):
+    def wait_for_battle_setup(self, timeout=30):
         """Wait for BATTLE_SETUP from joiner"""
         print("\n⏳ Waiting for opponent's battle setup...")
         
-        message, address = self.receive_message(timeout=30)
+        message, address = self.receive_message(timeout=timeout)
         
         if message and message.get('message_type') == 'BATTLE_SETUP':
             print("\n" + "="*50)
