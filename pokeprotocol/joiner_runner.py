@@ -30,7 +30,7 @@ class PokeProtocolJoiner(PokeProtocolBase):
         self.joiner_pokemon: Optional[Dict[str, Any]] = None 
         self.battle_engine: Optional[BattleSystem] = None 
         self.is_host_turn = True
-        self.local_turn_report: Optional[Dict] = None
+        self.local_turn_report: Optional[Dict] = None # Added for comparison
 
     def run(self):
         """Main joiner runner"""
@@ -271,13 +271,8 @@ class PokeProtocolJoiner(PokeProtocolBase):
             self.battle_state = "WAITING_FOR_MOVE" 
             print("\n✅ Battle setup complete! Ready to begin.")
             print("="*50)
-<<<<<<< HEAD
-            self.run_defender_loop()
-
-=======
             # Host goes first, so joiner enters the waiting loop
             self.wait_for_battle_messages()
->>>>>>> bb72a50e486076069be496322099e8d8c3ca8bd8
         else:
             print("✗ Failed to receive host's setup or timeout. Cannot proceed to turn.")
     
@@ -297,6 +292,7 @@ class PokeProtocolJoiner(PokeProtocolBase):
                         print(f"-> Received ACK for {message.get('ack_number')}")
                         continue
                     
+                    # ACK is sent for all sequenced messages *before* handling the message type
                     if seq_num:
                         self.send_ack(seq_num)
                         
@@ -314,11 +310,6 @@ class PokeProtocolJoiner(PokeProtocolBase):
                     # Handle Confirmation/Resolution when attacking (Joiner's turn)
                     elif self.battle_state == "WAITING_FOR_CONFIRM":
                         if message_type == 'CALCULATION_CONFIRM': 
-                            
-                            # --- CRITICAL FIX: Send ACK after receiving confirmation ---
-                            self.send_ack(seq_num)
-                            # --------------------------------------------------------
-                            
                             print("✓ Received CALCULATION_CONFIRM.")
                             self.end_turn()
                             
@@ -441,29 +432,35 @@ class PokeProtocolJoiner(PokeProtocolBase):
 
     def wait_for_report_and_confirm(self):
         """Modified: Joiner attacked, now waits ONLY for CONFIRM/RESOLUTION"""
-        print("\n⏳ Waiting for Host's CALCULATION_CONFIRM or RESOLUTION_REQUEST...")
+        max_retries = 3
+        timeout = 5 # 5 seconds
         
-        response_msg, _ = self.receive_message(timeout=5)
-        
-        if response_msg and response_msg.get('message_type') == 'CALCULATION_CONFIRM':
+        for attempt in range(max_retries):
+            print(f"\n⏳ Waiting for Host's CALCULATION_CONFIRM or RESOLUTION_REQUEST (Attempt {attempt + 1}/{max_retries})...")
             
-            # The ACK fix is applied inside wait_for_battle_messages loop flow when the
-            # message is received there. If received here, we need the ACK.
-            # However, since this method is blocking, the flow is cleaner if handled
-            # inside the main message loop. 
+            response_msg, _ = self.receive_message(timeout=timeout)
             
-            # But since this method is blocking and expecting a CONFIRM, 
-            # we apply the ACK here to ensure the reliability layer is satisfied.
-            self.send_ack(response_msg.get('sequence_number'))
+            if response_msg:
+                message_type = response_msg.get('message_type')
+                seq_num = response_msg.get('sequence_number')
+                
+                if message_type == 'CALCULATION_CONFIRM': 
+                    self.send_ack(seq_num)
+                    print("✓ Received CALCULATION_CONFIRM.")
+                    self.end_turn()
+                    return # Exit successfully
+                    
+                elif message_type == 'RESOLUTION_REQUEST':
+                    self.handle_resolution_request(response_msg)
+                    if self.battle_state == "WAITING_FOR_MOVE":
+                        return # Exit successfully after resolution
+                    elif self.battle_state == "TERMINATED":
+                        return # Exit on error
+                
+                print(f"Warning: Received unexpected message type: {message_type}. Waiting for expected response.")
             
-            print("✓ Received CALCULATION_CONFIRM.")
-            self.end_turn()
-            
-        elif response_msg and response_msg.get('message_type') == 'RESOLUTION_REQUEST':
-             self.handle_resolution_request(response_msg)
-        else:
-            print("✗ Timeout or invalid message.")
-            self.battle_state = "ERROR"
+        print("✗ Timeout or invalid message. Maximum retries reached. Battle status set to ERROR.")
+        self.battle_state = "ERROR"
 
     def send_calculation_confirm(self):
         """Step 4: Send CALCULATION_CONFIRM """
@@ -519,10 +516,12 @@ class PokeProtocolJoiner(PokeProtocolBase):
     def end_turn(self):
         """Prepare for the next turn"""
         
+        # 1. Check for win condition
         if self.host_pokemon['current_hp'] <= 0:
             self.send_game_over(winner=self.joiner_pokemon['name'], loser=self.host_pokemon['name']) 
             return
         
+        # 2. If no win, switch turn
         print("\n--- TURN ENDED ---")
         self.is_host_turn = not self.is_host_turn # Reverse turn order 
         self.battle_state = "WAITING_FOR_MOVE"
@@ -530,7 +529,10 @@ class PokeProtocolJoiner(PokeProtocolBase):
         self.wait_for_battle_messages() 
 
     def send_game_over(self, winner: str, loser: str):
-        """Send GAME_OVER message """
+        """
+        Send GAME_OVER message and wait for opponent's ACK.
+        This function is now responsible for ensuring delivery (with retries).
+        """
         seq_num = self.generate_sequence_number()
         message = self.build_message(
             message_type="GAME_OVER",
@@ -538,9 +540,28 @@ class PokeProtocolJoiner(PokeProtocolBase):
             winner=winner,
             loser=loser
         )
-        if self.send_message(message, self.peer_address):
-            print(f"\n🎉 Sent GAME_OVER! {winner} wins.")
-            self.battle_state = "GAME_OVER"
+        
+        max_retries = 3
+        timeout = 5
+        
+        for attempt in range(max_retries):
+            if self.send_message(message, self.peer_address):
+                print(f"\n🎉 Sent GAME_OVER! {winner} wins. (Attempt {attempt + 1}/{max_retries})")
+                
+                # Wait for ACK
+                ack_msg, _ = self.receive_message(timeout=timeout)
+                
+                if ack_msg and ack_msg.get('message_type') == 'ACK' and ack_msg.get('ack_number') == str(seq_num):
+                    print("✓ Received ACK for GAME_OVER. Final state confirmed.")
+                    self.battle_state = "GAME_OVER"
+                    return # Exit successfully
+                
+                print("Warning: No ACK received for GAME_OVER. Retrying...")
+            else:
+                print("✗ Failed to send GAME_OVER message. Retrying...")
+        
+        print("❌ Failed to confirm GAME_OVER state after maximum retries. Battle terminated.")
+        self.battle_state = "TERMINATED"
 
     def send_ack(self, ack_number: str):
         """Send a basic ACK message"""
@@ -552,7 +573,6 @@ class PokeProtocolJoiner(PokeProtocolBase):
         """Load and normalize Pokémon information from the Pokédex."""
         raw = None
         # We must use the methods provided in the Pokedex class (pokemon_db)
-        # Assuming pokemon_db is an instance of the Pokedex class
         raw = self.pokedex.get_pokemon_by_name(pokemon_name)
         if not raw:
             # Try to search by number if the name didn't work
@@ -567,7 +587,6 @@ class PokeProtocolJoiner(PokeProtocolBase):
     def print_sample_pokemon(self, limit: int = 6):
         """Display quick choices to help the player."""
         print("\nSample Pokémon choices:")
-        # We need a method in Pokedex to get a list for display.
         pokemon_list = self.pokedex.get_pokemon_list(limit)
         
         for entry in pokemon_list:
@@ -580,151 +599,6 @@ class PokeProtocolJoiner(PokeProtocolBase):
             pokedex_num = entry.get('pokedex_number', '???')
             
             print(f"  [{pokedex_num:>3}] {entry.get('name', '???')} ({types})")
-    
-    def run_defender_loop(self):
-        """
-        Joiner runs a loop that listens for ATTACK_ANNOUNCE (host attacks first),
-        replies DEFENSE_ANNOUNCE, computes and reports, and confirms.
-        """
-        if not self.connected or self.battle_state != "BATTLE_READY":
-            print("Cannot run turn loop: not connected or setup not ready.")
-            return
-
-        bs = create_battle_system_from_seed(self.seed)
-
-        # Ensure normalized pokemon dicts exist: self.my_pokemon and host_pokemon
-        my_poke = self.fetch_pokemon(self.my_pokemon['name']) if isinstance(self.my_pokemon, dict) else self.my_pokemon
-        host_poke = None
-        # The host's setup likely stored in self.peer_setup (or you parsed it earlier)
-        if self.peer_setup and isinstance(self.peer_setup.get("pokemon"), dict):
-            host_poke = self.peer_setup.get("pokemon")
-        if host_poke is None:
-            print("[JOINER] Host pokemon not found locally; waiting for host setup...")
-            # attempt a blocking receive for BATTLE_SETUP
-            msg, addr = self.receive_message(timeout=30)
-            if msg and msg.get("message_type") == "BATTLE_SETUP":
-                try:
-                    host_poke = json.loads(msg.get("pokemon")) if isinstance(msg.get("pokemon"), str) else msg.get("pokemon")
-                except:
-                    host_poke = msg.get("pokemon")
-        if "current_hp" not in my_poke:
-            my_poke["current_hp"] = my_poke["hp"]
-        if "current_hp" not in host_poke:
-            host_poke["current_hp"] = host_poke["hp"]
-
-        attacker_is_host = True  # host starts as attacker
-        print("\n=== Joiner Turn Loop (defender first) ===")
-        while True:
-            if attacker_is_host:
-                # 1) Wait for ATTACK_ANNOUNCE
-                print("[JOINER] Waiting for ATTACK_ANNOUNCE from host...")
-                while True:
-                    msg, addr = self.receive_message(timeout=10)
-                    if not msg:
-                        print("[JOINER] Timeout waiting for ATTACK_ANNOUNCE; keep listening...")
-                        continue
-                    if msg.get("message_type") == "ATTACK_ANNOUNCE":
-                        move_type = msg.get("move_type")
-                        attacker_boost_flag = bool(int(msg.get("use_sp_attack_boost", "0")))
-                        print("[JOINER] Received ATTACK_ANNOUNCE:", msg)
-                        break
-                    else:
-                        print("[JOINER] Ignoring message:", msg.get("message_type"))
-
-                # 2) DEFENSE_ANNOUNCE — decide whether to use defense boost
-                use_def_boost = False
-                choice = input(f"Host used move type {move_type}. Do you want to use special-defense boost? (y/N): ").strip().lower()
-                use_def_boost = (choice == 'y')
-                defense_msg = self.build_message(
-                    message_type="DEFENSE_ANNOUNCE",
-                    use_sp_defense_boost=str(int(use_def_boost))
-                )
-                self.send_message(defense_msg, self.peer_address)
-                print("[JOINER] Sent DEFENSE_ANNOUNCE:", defense_msg.replace("\n"," | "))
-
-                # 3) Compute damage locally (joiner calculates as defender)
-                calc = bs.calculate_damage(
-                    attacker=host_poke,
-                    defender=my_poke,
-                    move={"type": move_type, "category": "special" if move_type in ["fire","water","grass","electric","psychic","ice"] else "physical", "power": 50},
-                    use_sp_attack_boost=attacker_boost_flag,
-                    use_sp_defense_boost=use_def_boost
-                )
-                my_poke = bs.apply_damage(my_poke, calc["damage"])
-
-                # Send CALCULATION_REPORT
-                report = bs.build_calculation_report(host_poke, my_poke, calc)
-                print("[JOINER] Sending CALCULATION_REPORT:", report)
-                self.send_message(self.build_message(**report), self.peer_address)
-
-                # 4) Wait for host's CALCULATION_REPORT and compare
-                print("[JOINER] Waiting for host's CALCULATION_REPORT...")
-                other_report = None
-                while True:
-                    msg, addr = self.receive_message(timeout=10)
-                    if not msg:
-                        print("[JOINER] Timeout waiting for host report; keep listening...")
-                        continue
-                    if msg.get("message_type") == "CALCULATION_REPORT":
-                        other_report = msg
-                        print("[JOINER] Received host CALCULATION_REPORT:", other_report)
-                        break
-                    else:
-                        print("[JOINER] Ignoring message:", msg.get("message_type"))
-
-                # Compare
-                my_damage = int(report["damage_dealt"])
-                my_def_hp = int(report["defender_hp_remaining"])
-                other_damage = int(other_report.get("damage_dealt", -1))
-                other_def_hp = int(other_report.get("defender_hp_remaining", -1))
-
-                if my_damage == other_damage and my_def_hp == other_def_hp:
-                    # Reports match → wait for CALCULATION_CONFIRM from host
-                    print("[JOINER] Reports match, waiting for CALCULATION_CONFIRM...")
-                    while True:
-                        msg, addr = self.receive_message(timeout=10)
-                        if not msg:
-                            print("[JOINER] Waiting for CALCULATION_CONFIRM...")
-                            continue
-                        if msg.get("message_type") == "CALCULATION_CONFIRM":
-                            print("[JOINER] Received CALCULATION_CONFIRM — turn resolved.")
-                            break
-                        else:
-                            print("[JOINER] Ignoring message:", msg.get("message_type"))
-                else:
-                    # Discrepancy → wait for host RESOLUTION_REQUEST or send own
-                    print("[JOINER] Discrepancy detected. Sending RESOLUTION_REQUEST with our values.")
-                    res_msg = self.build_message(
-                        message_type="RESOLUTION_REQUEST",
-                        attacker=report["attacker"],
-                        move_used=report["move_used"],
-                        damage_dealt=str(report["damage_dealt"]),
-                        defender_hp_remaining=str(report["defender_hp_remaining"])
-                    )
-                    self.send_message(res_msg, self.peer_address)
-                    # Wait for host ACK or resolution - simple approach: wait for ACK
-                    msg, addr = self.receive_message(timeout=5)
-                    if msg and msg.get("message_type") == "ACK":
-                        print("[JOINER] Received ACK for resolution. Proceeding.")
-                    else:
-                        print("[JOINER] No ACK; terminating match.")
-                        return
-
-                # Check faint
-                if my_poke.get("fainted"):
-                    # opponent (host) won
-                    go = self.build_message(message_type="GAME_OVER", winner=host_poke.get("name"), loser=my_poke.get("name"))
-                    self.send_message(go, self.peer_address)
-                    print("[JOINER] You fainted. Sent GAME_OVER to host.")
-                    self.battle_state = "GAME_OVER"
-                    return
-
-                # Swap roles for next loop
-                attacker_is_host = not attacker_is_host
-
-            else:
-                # (This block would run if joiner had to act as attacker; not used in host-first model)
-                attacker_is_host = not attacker_is_host
     
     def show_status(self):
         """Display current status"""

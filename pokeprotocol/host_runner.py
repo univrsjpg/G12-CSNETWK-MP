@@ -8,21 +8,12 @@ import socket
 import random
 import json
 import sys
-<<<<<<< HEAD
-import time
-from typing import Optional, Tuple
-=======
 from typing import Optional, Tuple, Dict, Any
->>>>>>> bb72a50e486076069be496322099e8d8c3ca8bd8
 from base_protocol import PokeProtocolBase
 from pokemon_utils import normalize_pokemon_record
 from pokemon_data import pokemon_db
 from chatManager import ChatManager
-<<<<<<< HEAD
-from battle_system import create_battle_system_from_seed, BattleSystem
-=======
 from battle_system import BattleSystem, battle_system
->>>>>>> bb72a50e486076069be496322099e8d8c3ca8bd8
 
 
 class PokeProtocolHost(PokeProtocolBase):
@@ -375,17 +366,24 @@ class PokeProtocolHost(PokeProtocolBase):
     def end_turn(self):
         """Prepare for the next turn"""
         
+        # 1. Check for win condition
         if self.joiner_pokemon['current_hp'] <= 0:
+            # If win condition met, send GAME_OVER and return.
+            # FIX: The send_game_over method must handle the necessary ACK wait
             self.send_game_over(winner=self.host_pokemon['name'], loser=self.joiner_pokemon['name']) 
             return
 
+        # 2. If no win, switch turn
         print("\n--- TURN ENDED ---")
         self.is_host_turn = not self.is_host_turn  # Reverse turn order 
         self.battle_state = "WAITING_FOR_MOVE"
         print(f"It is now the {'Host' if self.is_host_turn else 'Joiner'}'s turn.")
 
     def send_game_over(self, winner: str, loser: str):
-        """Send GAME_OVER message """
+        """
+        Send GAME_OVER message and wait for opponent's ACK.
+        This function is now responsible for ensuring delivery.
+        """
         seq_num = self.generate_sequence_number()
         message = self.build_message(
             message_type="GAME_OVER",
@@ -393,9 +391,28 @@ class PokeProtocolHost(PokeProtocolBase):
             winner=winner,
             loser=loser
         )
-        if self.send_message(message, self.peer_address):
-            print(f"\n🎉 Sent GAME_OVER! {winner} wins.")
-            self.battle_state = "GAME_OVER"
+        
+        max_retries = 3
+        timeout = 5
+        
+        for attempt in range(max_retries):
+            if self.send_message(message, self.peer_address):
+                print(f"\n🎉 Sent GAME_OVER! {winner} wins. (Attempt {attempt + 1}/{max_retries})")
+                
+                # Wait for ACK
+                ack_msg, _ = self.receive_message(timeout=timeout)
+                
+                if ack_msg and ack_msg.get('message_type') == 'ACK' and ack_msg.get('ack_number') == str(seq_num):
+                    print("✓ Received ACK for GAME_OVER. Final state confirmed.")
+                    self.battle_state = "GAME_OVER"
+                    return # Exit successfully
+                
+                print("Warning: No ACK received for GAME_OVER. Retrying...")
+            else:
+                print("✗ Failed to send GAME_OVER message. Retrying...")
+        
+        print("❌ Failed to confirm GAME_OVER state after maximum retries. Battle terminated.")
+        self.battle_state = "TERMINATED" # Set to terminated if final state cannot be confirmed
 
     def send_ack(self, ack_number: str):
         """Send a basic ACK message"""
@@ -625,177 +642,12 @@ class PokeProtocolHost(PokeProtocolBase):
             self.battle_state = "WAITING_FOR_MOVE" 
             print("\n✓ Battle setup complete! Ready to begin.")
             print("="*50)
-<<<<<<< HEAD
-            self.start_battle_loop()
-=======
             return
             # -----------------------------------------------------------
->>>>>>> bb72a50e486076069be496322099e8d8c3ca8bd8
         else:
             print("✗ Failed to receive opponent's setup or timeout. Cannot proceed to turn.")
             return
     
-    def start_battle_loop(self):
-        """
-        Entry point for host to run the full turn-based battle loop.
-        Host is attacker on the first turn (Model 1).
-        """
-        if not self.connected or self.battle_state != "BATTLE_READY":
-            print("Cannot start battle: no connected player or setup not ready.")
-            return
-
-        # Create deterministic BattleSystem from seed received earlier
-        bs = create_battle_system_from_seed(self.seed)
-
-        # Normalize / use previously fetched pokemon objects
-        # self.my_pokemon and self.peer_pokemon should be normalized dicts (use normalize_csv_row)
-        my_poke = self.fetch_pokemon(self.my_pokemon['name']) if isinstance(self.my_pokemon, dict) else self.my_pokemon
-        enemy_poke = self.player_setup.get("pokemon") if self.player_setup else None
-        # If you stored JSON strings in player_setup, parse them here:
-        if isinstance(enemy_poke, str):
-            try:
-                enemy_poke = json.loads(enemy_poke)
-            except:
-                pass
-
-        # Ensure both sides have current_hp fields
-        if "current_hp" not in my_poke:
-            my_poke["current_hp"] = my_poke["hp"]
-        if "current_hp" not in enemy_poke:
-            enemy_poke["current_hp"] = enemy_poke["hp"]
-
-        attacker_is_host = True  # Host always starts
-        print("\n=== Starting Battle Loop ===")
-        while True:
-            if attacker_is_host:
-                attacker = my_poke
-                defender = enemy_poke
-                peer = self.peer_address
-                role = "HOST (attacker)"
-            else:
-                attacker = enemy_poke
-                defender = my_poke
-                peer = self.peer_address
-                role = "JOINER (attacker)"
-
-            print(f"\n-- {role} turn --")
-            # 1) Attacker chooses move type and whether to use special-attack boost
-            if attacker_is_host:
-                # Prompt host user for move type and boost usage
-                move_type = input(f"Choose move TYPE for {attacker['name']} (e.g., fire, water, grass, normal): ").strip().lower()
-                use_atk_boost = input("Use special-attack boost now? (y/N): ").strip().lower() == 'y'
-            else:
-                # This branch won't be executed by host for joiner moves; host still must send ATTACK_ANNOUNCE as attacker only.
-                move_type = input(f"Choose move TYPE for {attacker['name']}: ").strip().lower()
-                use_atk_boost = input("Use special-attack boost now? (y/N): ").strip().lower() == 'y'
-
-            # Build and send ATTACK_ANNOUNCE
-            attack_msg = self.build_message(
-                message_type="ATTACK_ANNOUNCE",
-                move_type=move_type,
-                use_sp_attack_boost=str(int(bool(use_atk_boost)))
-            )
-            print("[HOST] Sending ATTACK_ANNOUNCE ->", attack_msg.replace("\n", " | "))
-            self.send_message(attack_msg, self.peer_address)
-
-            # 2) Wait for DEFENSE_ANNOUNCE from joiner (defender)
-            print("[HOST] Waiting for DEFENSE_ANNOUNCE from defender...")
-            while True:
-                msg, addr = self.receive_message(timeout=10)
-                if not msg:
-                    print("[HOST] Timeout waiting for DEFENSE_ANNOUNCE. Retrying...")
-                    # for robustness you could resend ATTACK_ANNOUNCE or abort; here we loop
-                    time.sleep(0.5)
-                    continue
-                if msg.get("message_type") == "DEFENSE_ANNOUNCE":
-                    use_def_boost = bool(int(msg.get("use_sp_defense_boost", "0")))
-                    print("[HOST] Received DEFENSE_ANNOUNCE:", msg)
-                    break
-                else:
-                    print("[HOST] Ignoring message:", msg.get("message_type"))
-
-            # 3) Both compute damage locally using BattleSystem
-            calc = bs.calculate_damage(
-                attacker=attacker,
-                defender=defender,
-                move={"type": move_type, "category": "special" if move_type in ["fire","water","grass","electric","psychic","ice"] else "physical", "power": 50},
-                use_sp_attack_boost=use_atk_boost,
-                use_sp_defense_boost=use_def_boost
-            )
-
-            # Apply damage locally to defender
-            defender = bs.apply_damage(defender, calc["damage"])
-
-            # 4) Send CALCULATION_REPORT
-            report = bs.build_calculation_report(attacker, defender, calc)
-            # ensure message_type (build_calculation_report already includes it)
-            print("[HOST] Sending CALCULATION_REPORT:", report)
-            self.send_message(self.build_message(**report), self.peer_address)
-
-            # 5) Wait for opponent's CALCULATION_REPORT and compare
-            print("[HOST] Waiting for opponent CALCULATION_REPORT...")
-            other_report = None
-            while True:
-                msg, addr = self.receive_message(timeout=10)
-                if not msg:
-                    print("[HOST] Timeout waiting for opponent CALCULATION_REPORT. Retrying...")
-                    time.sleep(0.5)
-                    continue
-                if msg.get("message_type") == "CALCULATION_REPORT":
-                    other_report = msg
-                    print("[HOST] Received opponent CALCULATION_REPORT:", other_report)
-                    break
-                else:
-                    print("[HOST] Ignoring message:", msg.get("message_type"))
-
-            # Compare critical fields: damage_dealt and defender_hp_remaining
-            my_damage = int(report["damage_dealt"])
-            my_def_hp = int(report["defender_hp_remaining"])
-            other_damage = int(other_report.get("damage_dealt", -1))
-            other_def_hp = int(other_report.get("defender_hp_remaining", -1))
-
-            if my_damage == other_damage and my_def_hp == other_def_hp:
-                # Matched → send CALCULATION_CONFIRM
-                confirm_msg = self.build_message(message_type="CALCULATION_CONFIRM")
-                self.send_message(confirm_msg, self.peer_address)
-                print("[HOST] Reports match — sent CALCULATION_CONFIRM")
-            else:
-                # Discrepancy → send RESOLUTION_REQUEST with our values
-                res_msg = self.build_message(
-                    message_type="RESOLUTION_REQUEST",
-                    attacker=report["attacker"],
-                    move_used=report["move_used"],
-                    damage_dealt=str(report["damage_dealt"]),
-                    defender_hp_remaining=str(report["defender_hp_remaining"])
-                )
-                self.send_message(res_msg, self.peer_address)
-                print("[HOST] Sent RESOLUTION_REQUEST (discrepancy)")
-
-                # Wait for peer response: either ACK/update or further discrepancy
-                msg, addr = self.receive_message(timeout=5)
-                if msg and msg.get("message_type") == "ACK":
-                    print("[HOST] Peer acknowledged resolution. Proceeding.")
-                else:
-                    print("[HOST] Resolution failed or no ACK — terminating match.")
-                    return
-
-            # Announce faint / game over if needed
-            if defender.get("fainted"):
-                # Send GAME_OVER with winner = attacker
-                game_over_msg = self.build_message(
-                    message_type="GAME_OVER",
-                    winner=attacker.get("name"),
-                    loser=defender.get("name")
-                )
-                self.send_message(game_over_msg, self.peer_address)
-                print(f"[HOST] GAME_OVER sent. Winner: {attacker.get('name')}")
-                self.battle_state = "GAME_OVER"
-                return
-
-            # Swap roles and continue
-            attacker_is_host = not attacker_is_host
-            print("[HOST] Turn complete — swapping roles.")
-
     def show_status(self):
         """Display current status"""
         print("\n" + "="*50)
